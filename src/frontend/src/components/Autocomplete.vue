@@ -1,12 +1,10 @@
 <template>
 	<input
 		:autocomplete="!autocomplete"
-
 		@keypress="_refreshList"
 		@keyup.left="_refreshList"
 		@keyup.right="_refreshList"
 		@click="_refreshList"
-
 		v-model="modelvalue"
 	/>
 </template>
@@ -22,14 +20,15 @@ import {splitIntoTerms} from '@/utils';
 
 // Inherit jQueryUI autocomplete widget and customize the rendering
 // to apply some bootstrap classes and structure
+// Jesse: renderMenu en renderItem mee kunnen geven??
 $.widget('custom.autocomplete', $.ui.autocomplete, {
 	_renderMenu(ul: HTMLUListElement, items: any) {
 		const self = this;
-		$.each(items, function(index, item){
+		$.each(items, function(index, item) {
 			self._renderItem(ul, item);
 		});
 	},
-	_renderItem(ul: HTMLUListElement, item: {value: string, label: string}) {
+	_renderItem(ul: HTMLUListElement, item: { value: string, label: string }) {
 		$('<li></li>')
 			.attr('value', item.value)
 			.html('<a>' + item.label + '</a>')
@@ -52,12 +51,19 @@ export default Vue.extend({
 	props: {
 		value: String,
 		url: String,
+		/** alternative to url, use this to get the data yourself. */
+		getData: Function as any as () => (term: string) => Promise<string[]>,
+		/** Process the data before it is displayed. Work on both getData and url. */
+		processData: Function as any as () => (data: any) => string[],
 		autocomplete: {
 			default: true,
 			type: Boolean
 		},
-		useQuoteAsWordBoundary: Boolean
+		useQuoteAsWordBoundary: Boolean,
 	},
+	data: () => ({
+		withCredentials: WITH_CREDENTIALS,
+	}),
 	computed: {
 		modelvalue: {
 			get(): string { return this.value; },
@@ -67,6 +73,7 @@ export default Vue.extend({
 	methods: {
 		_createAutocomplete() {
 			const $input = $(this.$el);
+			//console.log($input.id)
 			const self = this;
 			let lastSearchValue = '';
 			let lastSearchResults: string[]|undefined;
@@ -77,26 +84,29 @@ export default Vue.extend({
 					'ui-autocomplete': 'dropdown-menu'
 				},
 				source(params: any, render: (v: string[]) => void) {
+					if (!self.getData && !self.url) return;
+
 					const {value} = self._getWordAroundCursor(false);
-					if (!value.length) {
-						return;
-					} else if (value === lastSearchValue) {
-						if (lastSearchResults) {
-							render(lastSearchResults);
-						} // user typed quickly or something, results are in flight, will come in eventually...
-					} else {
-						lastSearchValue = value;
-						$.ajax({
-							method: 'GET',
-							url: self.url,
-							data: {term: value},
-							dataType: 'json',
-							success(data) {
-								lastSearchResults = data;
-								render(data);
-							}
-						});
-					}
+					if (!value.length) return;
+					if (value === lastSearchValue && lastSearchResults) return render(lastSearchResults);
+					lastSearchValue = value;
+
+					const getData = (self.getData && self.getData(value)) || $.ajax({
+						method: 'GET',
+						url: self.url,
+						data: {term: value},
+						dataType: 'json',
+						xhrFields: {
+							withCredentials: self.withCredentials
+						}
+					});
+
+					getData.then(r => {
+						if (value !== lastSearchValue) return; // stale data.
+						if (self.processData) r = self.processData(r);
+						lastSearchResults = r;
+						render(r);
+					});
 				},
 				create() {
 					// This element has a div appended every time an element is highlighted
@@ -113,7 +123,7 @@ export default Vue.extend({
 					event.preventDefault();
 					// prevent jquery from previewing the entire value in the input field.
 					// since we run custom value logic
-				},
+				}
 			});
 		},
 		_destroyAutocomplete() { $(this.$el).autocomplete('destroy'); },

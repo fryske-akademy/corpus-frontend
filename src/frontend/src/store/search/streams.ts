@@ -1,7 +1,7 @@
 import URI from 'urijs';
 
-import { ReplaySubject, Observable, merge, fromEvent, of, Notification, from } from 'rxjs';
-import { debounceTime, switchMap, map, distinctUntilChanged, shareReplay, filter, materialize, tap } from 'rxjs/operators';
+import { ReplaySubject, Observable, merge, fromEvent, Notification, from, UnsubscriptionError } from 'rxjs';
+import { debounceTime, switchMap, map, shareReplay, filter, materialize } from 'rxjs/operators';
 import cloneDeep from 'clone-deep';
 
 import * as RootStore from '@/store/search/';
@@ -9,12 +9,12 @@ import * as CorpusStore from '@/store/search/corpus';
 import * as HistoryStore from '@/store/search/history';
 import * as PatternStore from '@/store/search/form/patterns';
 import * as ExploreStore from '@/store/search/form/explore';
-import * as HitsStore from '@/store/search/results/hits';
 import * as InterfaceStore from '@/store/search/form/interface';
-import * as DocsStore from '@/store/search/results/docs';
 import * as FilterStore from '@/store/search/form/filters';
 import * as GapStore from '@/store/search/form/gap';
 import * as QueryStore from '@/store/search/query';
+import * as ConceptStore from '@/store/search/form/conceptStore';
+import * as GlossStore from '@/store/search/form/glossStore';
 
 import UrlStateParser from '@/store/search/util/url-state-parser';
 
@@ -27,14 +27,19 @@ import Vue from 'vue';
 
 type QueryState = {
 	params?: BLTypes.BLSearchParameters,
-	state: Pick<RootStore.RootState, 'query'|'interface'|'global'|'hits'|'docs'>
+	state: Pick<RootStore.RootState, 'query'|'interface'|'global'|'views'>
 };
 
-const metadata$ = new ReplaySubject<string>(1);
-const submittedMetadata$ = new ReplaySubject<string>(1);
+const metadata$ = new ReplaySubject<string|undefined>(1);
+const submittedMetadata$ = new ReplaySubject<string|undefined>(1);
 const url$ = new ReplaySubject<QueryState>(1);
 
 // TODO handle errors gracefully, right now the entire stream is closed permanently.
+
+// TODO we could probably refactor this whole file to just be a couple of computeds in the store.
+// That would likely be simpler and more readable.
+// The only thing we'd need to figure out is the debounce and delay functions. But there might be small npm packages for that.
+
 
 /**
  * Reads the entered document metadata filters as they are in the main search form,
@@ -61,9 +66,9 @@ export const selectedSubCorpus$ = merge(
 				subscriber.next(Notification.createNext<BLTypes.BLDocResults>({
 					docs: [],
 					summary: {
-						numberOfDocs: CorpusStore.getState().documentCount,
+						numberOfDocs: CorpusStore.getState().corpus!.documentCount,
 						stillCounting: false,
-						tokensInMatchingDocuments: CorpusStore.getState().tokenCount,
+						tokensInMatchingDocuments: CorpusStore.getState().corpus!.tokenCount,
 					}
 				} as any));
 
@@ -72,7 +77,7 @@ export const selectedSubCorpus$ = merge(
 				return;
 			}
 
-			const {request, cancel} = Api.blacklab.getDocs(CorpusStore.getState().id, params, {
+			const {request, cancel} = Api.blacklab.getDocs(INDEX_ID, params, {
 				headers: { 'Cache-Control': 'no-cache' }
 			}) as {
 				request: Promise<BLTypes.BLDocResults>;
@@ -112,15 +117,15 @@ export const submittedSubcorpus$ = submittedMetadata$.pipe(
 			subscriber.next({
 				docs: [],
 				summary: {
-					numberOfDocs: CorpusStore.getState().documentCount,
+					numberOfDocs: CorpusStore.getState().corpus!.documentCount,
 					stillCounting: false,
-					tokensInMatchingDocuments: CorpusStore.getState().tokenCount,
+					tokensInMatchingDocuments: CorpusStore.getState().corpus!.tokenCount,
 				}
 			} as any);
 			return;
 		}
 
-		const {request, cancel} = Api.blacklab.getDocs(CorpusStore.getState().id, params, {
+		const {request, cancel} = Api.blacklab.getDocs(INDEX_ID, params, {
 			headers: { 'Cache-Control': 'no-cache' }
 		});
 		request.then(
@@ -149,21 +154,22 @@ url$.pipe(
 		isTruncated: boolean;
 		url: string;
 	}>(v => {
-		const uri = new URI();
-
-		// Extract our current url path, up to and including 'search'
-		// Usually something like ['corpus-frontend', ${indexId}, 'search']
-		// But might be different depending on whether the application is proxied or deployed using a different name.
-		const basePath = uri.segmentCoded().slice(0, uri.segmentCoded().lastIndexOf('search')+1);
-
-		// If we're not searching, return a bare url pointing to /search/
+		// If we're not searching, return a bare url pointing to ${root}/${corpus}/search/
 		if (v.params == null) {
 			return {
-				url: uri.segmentCoded(basePath).search('').toString(),
+				url: Api.frontendPaths.currentCorpus(),
 				isTruncated: false,
 				state: v.state
 			};
 		}
+
+		// NOTE:
+		// This part of the url-generation is pretty confusing
+		// If in doubt, read url-state-parser for any calls to getString(), getNumber(), etc.
+		// All those properties are the ones that we should set here.
+		// We should codify them in an enum sometime, and make this process type-safe
+		// So we get a compile error when we forget to add a property here.
+		// or when we try to add a property that doesn't exist in the url-state-parser.
 
 		// Remove null, undefined, empty strings and empty arrays from our query params
 		// Any missing/omitted parameters in the (frontend) url will be replaced by their defaults by the url-state-parser when the url might be decoded.
@@ -179,7 +185,10 @@ url$.pipe(
 		// Store some interface state in the url, so the query can be restored to the correct form
 		// even when loading the page from just the url. See UrlStateParser class in store/utils/url-state-parser.ts
 		// TODO we should probably output the form in the url as /${indexId}/('search'|'explore')/('simple'|'advanced' ...etc)/('hits'|'docs')
-		const {viewedResults} = v.state.interface;
+		// But for now, we keep parity with blacklab's urls. This allows just changing /corpus-frontend to /blacklab-server, which has some value I suppose.
+		// We only add a few query parameters of our own to restore some parts of the interface that can't be inferred from the blacklab parameters.
+		const viewedResults = v.state.interface.viewedResults;
+		const view = viewedResults ? v.state.views[viewedResults] : undefined;
 		Object.assign(queryParams, {
 			interface: JSON.stringify({
 				form: v.state.query.form,
@@ -187,18 +196,19 @@ url$.pipe(
 				patternMode: v.state.query.form === 'search' ? v.state.query.subForm : undefined, // remove if not relevant
 				viewedResults: undefined, // remove from query parameters: is encoded in path (segmentcoded)
 			} as Partial<InterfaceStore.ModuleRootState>),
-			groupDisplayMode: v.state[viewedResults!].groupDisplayMode || undefined // remove null
+			groupDisplayMode: view?.groupDisplayMode || undefined, // remove null
+			resultViewCustomState: view?.customState || undefined, // remove null
 		});
 
 		// Generate the new frontend url
-		const uri2 = uri
-			.segmentCoded(basePath)
-			.segmentCoded(v.state.interface.viewedResults!)
+		const url = new URI()
+			.segment([CONTEXT_URL, INDEX_ID, 'search', v.state.interface.viewedResults!])
+			.host('').protocol('').port('') // remove these, we're only interested in the path and query.
 			.search(queryParams);
 
-		const fullUrl = uri2.toString();
+		const fullUrl = url.toString();
 		return {
-			url: fullUrl.length <= 4000 ? fullUrl : uri2.search(Object.assign({}, queryParams, {patt: undefined, pattgapdata: undefined})).toString(),
+			url: fullUrl.length <= 4000 ? fullUrl : url.search(Object.assign({}, queryParams, {patt: undefined, pattgapdata: undefined})).toString(),
 			isTruncated: fullUrl.length > 4000,
 			state: v.state,
 			params: v.params
@@ -210,9 +220,12 @@ url$.pipe(
 	// (Or just when there are subtle differences such as a trailing slash or no trailing slash)
 	filter(v => {
 		// new urls are always generated without trailing slash (no empty trailing segment string)
-		// while current url might contain one for whatever reason (if user just landed on page)
+		// while current url might contain one for whatever reason (if user just landed on page - tomcat injects it)
 		// So strip it from the current url in order to properly compare.
-		const curUrl = new URI().toString().replace(/\/+$/, '');
+		// also remove domain, port, protocol, since the new url may be generated without them.
+		// if CONTEXT_URL (cfUrlExternal in corpus-frontend.properties) doesn't contain them.
+		// If we don't check this here, we might end up with a history entry for the same page, but with a different trailing slash, or even the exact same url.
+		const curUrl = new URI().host('').protocol('').port('').toString().replace(/\/+$/, '');
 
 		if (curUrl !== v.url) {
 			return true;
@@ -239,14 +252,13 @@ url$.pipe(
 		entry: HistoryStore.HistoryEntry
 		url: string,
 	} => {
-		const {query, docs, hits, global} = v.state;
+		const {query, views, global} = v.state;
 		// Store only those parts actively in use (so don't store the hits tab info when currently viewing docs for example)
 		// the rest is set to defaults so the rest of the page nicely clears if this entry is loaded later.
 		const entry: HistoryStore.HistoryEntry = {
 			filters: query.filters || {},
 			global,
-			hits: v.state.interface.viewedResults === 'hits' ? hits : HitsStore.defaults,
-			docs: v.state.interface.viewedResults === 'docs' ? docs : DocsStore.defaults,
+			view: views[v.state.interface.viewedResults!],
 			explore: query.form === 'explore' ? {
 				...ExploreStore.defaults,
 				[query.subForm]: query.formState
@@ -261,7 +273,9 @@ url$.pipe(
 				patternMode: query.form === 'search' ? query.subForm : 'simple',
 				viewedResults: v.state.interface.viewedResults,
 			},
-			gap: query.gap || GapStore.defaults
+			gap: query.gap || GapStore.defaults,
+			concepts: ConceptStore.defaults,
+			glosses: GlossStore.defaults,
 		};
 		return {
 			url: v.url,
@@ -280,6 +294,7 @@ url$.pipe(
 	ga('send', 'pageview');
 });
 
+/** Here we attach listeners to the vuex store, and pump the relevant values into the streams defined above. That in turn runs the listeners on those streams, and we can compute the stuff we need. */
 export default () => {
 	debugLog('Begin attaching store to url and subcorpus calculations.');
 
@@ -301,29 +316,26 @@ export default () => {
 		(state): QueryState => ({
 			params: RootStore.get.blacklabParameters(),
 			state: {
-				docs: state.docs,
+				views: state.views,
 				global: state.global,
-				hits: state.hits,
 				interface: state.interface,
 				query: state.query
 			}
 		}),
 		(cur, prev) => {
 			url$.next(cloneDeep(cur));
-			if (
-				(cur.params?.patt || cur.params?.filter) && 
-				(
-					(cur.params?.patt !== prev.params?.patt) || 
-					(cur.params?.filter || cur.params?.filter)
-				)
+			// @ts-ignore
+			if ( Vue.$plausible &&
+				(cur.params?.patt || cur.params?.filter) &&
+				((cur.params?.patt !== prev?.params?.patt) ||
+				(cur.params?.filter !== prev?.params?.filter))
 			) {
 				// @ts-ignore
-				Vue.$plausible?.trackEvent('search', { props: {
+				Vue.$plausible.trackEvent('search', { props: {
 					pattern: cur.params?.patt || '',
 					filter: cur.params?.filter || ''
 				}});
 			}
-		
 		},
 		{
 			immediate: true,

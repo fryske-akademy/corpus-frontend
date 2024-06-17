@@ -4,12 +4,12 @@
 			<div class="modal-content">
 				<div class="modal-header">
 					<button type="button" class="close" data-dismiss="modal" aria-label="Close"><span aria-hidden="true">&times;</span></button>
-					<h4 class="modal-title">Global settings</h4>
+					<h4 class="modal-title">{{$t('setting.heading')}}</h4>
 				</div>
 				<div class="modal-body">
 					<div class="form-horizontal">
 						<div class="form-group"> <!-- behaves as .row when in .form-horizontal so .row may be omitted -->
-							<label for="resultsPerPage" class="col-xs-3">Results per page:</label>
+							<label for="resultsPerPage" class="col-xs-3">{{$t('setting.resultsPerPage')}}:</label>
 							<div class="col-xs-9">
 								<SelectPicker
 									data-id="resultsPerPage"
@@ -24,7 +24,7 @@
 						</div>
 
 						<div class="form-group">
-							<label for="sampleSize" class="col-xs-3">Sample size:</label>
+							<label for="sampleSize" class="col-xs-3">{{$t('setting.sampleSize')}}:</label>
 							<div class="col-xs-9">
 								<div class="input-group">
 									<SelectPicker
@@ -41,32 +41,32 @@
 										v-model="sampleMode"
 									/>
 
-									<input id="sampleSize" name="sampleSize" placeholder="sample size" type="number" class="form-control" v-model.lazy="sampleSize" ref="sampleSize"/>
+									<input id="sampleSize" name="sampleSize" :placeholder="$t('setting.sampleSize')" type="number" class="form-control" v-model.lazy="sampleSize" ref="sampleSize"/>
 								</div>
 							</div>
 						</div>
 
 						<div class="form-group">
-							<label for="sampleSeed" class="col-xs-3">Seed:</label>
+							<label for="sampleSeed" class="col-xs-3">{{$t('setting.sampleSeed')}}:</label>
 							<div class="col-xs-9">
-								<input id="sampleSeed" name="sampleSeed" placeholder="seed" type="number" class="form-control" v-model.lazy="sampleSeed">
+								<input id="sampleSeed" name="sampleSeed" :placeholder="$t('setting.sampleSeed')" type="number" class="form-control" v-model.lazy="sampleSeed">
 							</div>
 						</div>
 
 						<div class="form-group">
-							<label for="wordsAroundHit" class="col-xs-3">Context size:</label>
+							<label for="context" class="col-xs-3">{{$t('setting.context')}}:</label>
 							<div class="col-xs-9">
-								<input id="wordsAroundHit" name="wordsAroundHit" placeholder="Context size" type="number" class="form-control" v-model.lazy="wordsAroundHit">
+								<input id="context" name="context" :placeholder="$t('setting.context')" type="number" class="form-control" v-model.lazy="context">
 							</div>
 						</div>
 					</div>
 					<hr>
-					<div class="checkbox-inline"><label for="wide-view"><input type="checkbox" id="wide-view" name="wide-view" data-persistent checked> Wide View</label></div>
+					<div class="checkbox-inline"><label for="wide-view"><input type="checkbox" id="wide-view" name="wide-view" v-model="wideView.value">{{$t('setting.wideView')}}</label></div>
 					<br>
-					<div v-if="debug.debug_visible || debug.debug" class="checkbox-inline"><label for="debug" class="text-muted"><input type="checkbox" id="debug" name="debug" v-model="debug.debug"> Debug info</label></div>
+					<div v-if="debug.debug_visible || debug.debug" class="checkbox-inline"><label for="debug" class="text-muted"><input type="checkbox" id="debug" name="debug" v-model="debug.debug">{{ $t('setting.debug') }}</label></div>
 				</div>
 				<div class="modal-footer">
-					<button type="button" name="closeSettings" class="btn btn-primary" data-dismiss="modal">Close</button>
+					<button type="button" name="closeSettings" class="btn btn-primary" data-dismiss="modal">{{$t('setting.close')}}</button>
 				</div>
 			</div>
 		</div>
@@ -79,24 +79,22 @@ import Vue from 'vue';
 
 import * as RootStore from '@/store/search/';
 import * as GlobalViewSettings from '@/store/search/results/global';
-import * as ResultsViewSettings from '@/store/search/results';
+import * as ResultsViewSettings from '@/store/search/results/views';
 
 import SelectPicker,{ Option } from '@/components/SelectPicker.vue';
 
 import debug from '@/utils/debug';
+import { localStorageSynced } from '@/utils/localstore';
 
 export default Vue.extend({
 	components: {
 		SelectPicker,
 	},
-	data: (): {
-		sampleModeOptions: Array<GlobalViewSettings.ModuleRootState['sampleMode']>,
-		pageSizeOptions: Option[],
-		debug: typeof debug
-	} => ({
-		sampleModeOptions: ['percentage', 'count'],
-		pageSizeOptions: ['20','50','100','200'].map(value => ({value, label: `${value} results`})),
-		debug
+	data: () => ({
+		sampleModeOptions: ['percentage', 'count'] as Array<GlobalViewSettings.ModuleRootState['sampleMode']>,
+		pageSizeOptions: ['20','50','100','200'].map(value => ({value, label: `${value} results`})) as Option[],
+		debug,
+		wideView: localStorageSynced('cf/wideView', false),
 	}),
 	computed: {
 		viewedResultsSettings: RootStore.get.viewedResultsSettings,
@@ -125,7 +123,7 @@ export default Vue.extend({
 			get(): string { return this.itoa(GlobalViewSettings.getState().sampleSeed); },
 			set(v: string) {
 				GlobalViewSettings.actions.sampleSeed(this.atoi(v));
-				if (this.viewedResultsSettings && (this.viewedResultsSettings.groupBy.length || this.viewedResultsSettings.groupByAdvanced.length)) {
+				if (this.viewedResultsSettings && this.viewedResultsSettings.groupBy.length) {
 					// No need to do this when ungrouped - the raw number of results
 					// will stay as it is, but the distribution (and number of) groups may change and
 					// cause the number of pages to shift
@@ -133,9 +131,15 @@ export default Vue.extend({
 				}
 			}
 		},
-		wordsAroundHit: {
-			get(): string { return this.itoa(GlobalViewSettings.getState().wordsAroundHit); },
-			set(v: string) { GlobalViewSettings.actions.wordsAroundHit(this.atoi(v)); }
+		context: {
+			// context can be a string or number in BlackLab, but for now in the form we only allow numbers.
+			// hence the atoi so BlackLab receives a number
+			// the .value interface of html input field only deals in strings...
+			get(): string {
+				const c = GlobalViewSettings.getState().context;
+				return c != null ? c.toString() : '';
+			},
+			set(v: string) { GlobalViewSettings.actions.context(this.atoi(v)); }
 		},
 	},
 	methods: {
@@ -145,5 +149,13 @@ export default Vue.extend({
 		itoa(n: number|null): string { return n == null ? '' : n.toString(); },
 		atoi(s: string): number|null { return s ? Number.parseInt(s, 10) : null; }
 	},
+	watch: {
+		'wideView.value': {
+			immediate: true,
+			handler(v: boolean) {
+				$('.container, .container-fluid').toggleClass('container', !v).toggleClass('container-fluid', v);
+			},
+		}
+	}
 })
 </script>

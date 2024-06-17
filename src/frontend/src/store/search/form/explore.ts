@@ -36,6 +36,7 @@ type ModuleRootState = {
 };
 
 // NOTE: This state shape is invalid, we correct it on store initialization
+// We need some references to the UI store, which is not initialized yet.
 const defaults: ModuleRootState = {
 	ngram: {
 		/** 1-indexed */
@@ -154,6 +155,7 @@ const actions = {
 	},
 
 	replace: b.commit((state, payload: ModuleRootState) => {
+		actions.corpora.replace(payload.corpora);
 		actions.frequency.replace(payload.frequency);
 		actions.ngram.replace(payload.ngram);
 	}, 'replace'),

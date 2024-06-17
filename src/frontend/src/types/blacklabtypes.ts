@@ -1,5 +1,7 @@
 /** BlackLab query parameters. Is a stricter subset of query parameters blacklab accepts. */
 export type BLSearchParameters = {
+	/** Limit results to just this document */
+	docpid?: string;
 	/** Number of results to request */
 	number: number;
 	/** Index of first result to request */
@@ -10,8 +12,8 @@ export type BLSearchParameters = {
 	samplenum?: number;
 	/** Seed from which the samples are generated */
 	sampleseed?: number;
-	/** Context size, may be limited by blacklab */
-	wordsaroundhit?: number;
+	/** Context size, may be limited by blacklab. A number for words before and after the hit, or an inline element such as "s", "p", etc. Depending on corpus. See "inlineTags" in input format (*.blf.yaml), or available from getRelations in the api. */
+	context?: number|string;
 	/** How to filter results: a lucene query */
 	filter?: string;
 	/** How to sort results, comma-separated list of field:${someMetadataFieldId} or (wordleft|hit|wordright):${someAnnotationId} */
@@ -38,6 +40,14 @@ export type BLSearchParameters = {
 	listvalues?: string;
 	/** List of comma-separated metadata IDs to include in document info. */
 	listmetadatavalues?: string;
+
+	/** maximum hits to count outside requested window (only does something when > first+number) */
+	maxcount?: number;
+	/** maximum hits to actually retrieve (only does something when > first+number) */
+	maxretrieve?: number;
+
+	/** When using relation matching in pattern, widen the match part of the hit to contain both source and target. */
+	adjusthits?: 'yes';
 };
 
 // --------------
@@ -55,6 +65,7 @@ export interface BLError {
 	error: {
 		code: string;
 		message: string;
+		stackTrace?: string;
 	};
 }
 
@@ -86,6 +97,42 @@ export interface BLIndex {
 	timeModified: string;
 	/** Number of tokens in this index (excluding those tokens added in any currently running indexing action). */
 	tokenCount?: number;
+	/** v4 and up: token count per annotatedField. */
+	tokenCounts?: Array<{fieldName: string; tokenCount: number}>
+	/** Number of documents in this index (excluding any added in a currently running indexing action). Not present pre-v4 */
+	documentCount?: number;
+}
+
+export interface BLSpanInfo {
+	/** Number of occurances of this span in the corpus. */
+	count: number;
+	attributes: {
+		[attributeName: string]: {
+			/** Every value encountered for this attribute on this span, and number of occurances */
+			values: {[value: string]: number};
+			/** Does the values property contain all values or was it truncated? */
+			valueListComplete: boolean;
+		}
+	};
+}
+
+export interface BLRelationInfo {
+	/**
+	 * Spans (previously "inline tags") in the corpus, with their number of occurances.
+	 * A Span is a set of two markers in the text, such as <s> and </s> for a sentence.
+	 * They can optionally have attributes, etc.
+	 * BlackLab can ensure queries fully occur within these spans, etc.
+	*/
+	spans?: Record<string, BLSpanInfo>;
+	/** Only when relations have been indexed in this corpus. */
+	relations?: {
+		/** Relations are always stored in a "dep" property for now? */
+		dep: {
+			[relationType: string]: {
+				count: number;
+			}
+		}
+	}
 }
 
 export interface BLUser {
@@ -101,7 +148,7 @@ export type BLShareInfo = string[];
 
 export interface BLCacheStatus {
 	maxNumberOfSearches: number;
-	maxSearchAgeSex: number;
+	maxSearchAgeSec: number;
 	maxSizeBytes: number;
 	numberOfSearches: number;
 	sizeBytes: number;
@@ -139,7 +186,7 @@ export interface BLServer {
 	blacklabVersion: string;
 	cacheStatus?: BLCacheStatus;
 	helpPageUrl: string;
-	indices: {
+	corpora: {
 		[key: string]: BLIndex;
 	};
 	user: BLUser;
@@ -232,7 +279,7 @@ export interface BLMetadataField {
 }
 
 /** Contains information about the internal structure of the index - which fields exist for tokens, which metadata fields exist for documents, etc */
-export interface BLIndexMetadataInternal {
+export interface BLIndexMetadata {
 	/** Always present, except in really old versions of blacklab */
 	annotationGroups?: {
 		[annotatedFieldId: string]: Array<{
@@ -274,18 +321,13 @@ export interface BLIndexMetadataInternal {
 		/** yyyy-mm-dd hh:mm:ss */
 		timeModified: string;
 	};
-}
-type BLIndexMetadataV1 = BLIndexMetadataInternal&{
-	complexFields: {[id: string]: BLAnnotatedFieldV1};
-};
-type BLIndexMetadataV2 = BLIndexMetadataInternal&{
-	annotatedFields: {[id: string]: BLAnnotatedFieldV2};
-	/** Only available if index contains actual documents and if versionInfo.blackLabVersion >= 2.0.0 */
-	documentCount?: number;
-};
 
-export type BLIndexMetadata = BLIndexMetadataV1|BLIndexMetadataV2;
-export function isIndexMetadataV1(v: BLIndexMetadata): v is BLIndexMetadataV1 { return (v as any).complexFields != null; }
+	annotatedFields: {[id: string]: BLAnnotatedFieldV2};
+	/** key into annotatedFields */
+	mainAnnotatedField: string;
+	/** Only available if index contains actual documents and if versionInfo.blackLabVersion >= 2.0.0 */
+	documentCount: number;
+};
 
 export type BLDocument = {
 	docPid: string;
@@ -319,6 +361,22 @@ export type BLSearchSummary = {
 	windowFirstResult: number;
 	windowHasNext: boolean;
 	windowHasPrevious: boolean;
+
+	/** Only for queries with a pattern. */
+	pattern?: {
+		/** The serialization of the query object BlackLab actually executed. */
+		bcql: string;
+		/** One of the annotatedFields */
+		fieldName: string;
+		/** Json representation of the query. Not present when requesting results as xml output. */
+		json?: any;
+		/* MatchInfos only available when hits are returned (i.e. not a docs request, not grouped) */
+		matchInfos?: {
+			[key: string]: {
+				type: 'span'|'tag'|'relation'|'list';
+			}
+		}
+	}
 } & BLSearchSummarySampleSettings;
 
 export interface BLSearchSummaryTotalsDocs {
@@ -380,6 +438,11 @@ export interface BLGroupResult {
 	identity: string;
 	identityDisplay: string;
 	size: number;
+	/** Individual property values that identify this group. Whereas identity and identityDisplay are encoded cq. preformatted, these are the raw values. */
+	properties: Array<{
+		name: string,
+		value: string
+	}>
 }
 
 export interface BLHitGroupResult extends BLGroupResult {
@@ -420,18 +483,112 @@ export interface BLDocGroupResults {
 
 /** Contains a hit's tokens, deconstructed into the individual annotations/properties, such as lemma, pos, word, always contains punctuation in between tokens */
 export interface BLHitSnippetPart {
-	/** Punctuation always exists (even if only an empty string or a space) */
+	/**
+	 * Punctuation always exists (even if only an empty string or a space).
+	 * Punctuation at a token comes BEFORE the word.
+	 * The final punctuation (e.g. trailing '?', '.', etc.) is therefor at document length + 1.
+	 * This gives a bit of mess in hits, because the punctuation trailing the "before" part of the hit is contained in the match at index 0.
+	 * Likewise, punctuation at the end of the hit is contained in the "after" context at index 0.
+	 */
 	punct: string[];
 	/** Usually this contains fields like lemma, word, pos */
 	[key: string]: string[];
 }
 
-/** Contains all the AnnotatedField (previously token/word "properties") values for tokens in or around a hit */
-export interface BLHitSnippet {
-	left: BLHitSnippetPart;
+/** A subset of a BLHit, returned in document requests (/docs) when there are also hits. */
+export type BLHitSnippet = {
+	/** Omitted if snippet is at start of document */
+	left?: BLHitSnippetPart;
+	/** Omitted if snippet is at end of document */
+	right?: BLHitSnippetPart;
 	match: BLHitSnippetPart;
-	right: BLHitSnippetPart;
 }
+
+/** When tagging part of the query like a:[] returns the start and end of the part labelled with the 'a' (so in this case, the []) */
+export interface BLRelationMatchSpan {
+	/** When tagging part of the query like a:[] returns the start and end of the part labelled with the 'a' (so in this case, the []) */
+	type: 'span';
+	start: number;
+	end: number;
+}
+
+/** Something like "within <s/>". Represents the start and end of the span surrounded with the <s/>. */
+export interface BLRelationMatchTag {
+	/** Something like "within <s/>". Represents the start and end of the span surrounded with the <s/>. */
+	type: 'tag';
+	start: number;
+	end: number;
+}
+
+/** Represents the info captured by an arrow in the query (-->, ==>). So the source, target, and value. */
+export interface BLRelationMatchRelation {
+	/** Represents the info captured by an arrow in the query (-->, ==>). So the source, target, and value. */
+	type: 'relation';
+	/**
+	 * Usually "dep" (for "dependency"), but ultimately decided by the user when they indexed their corpus.
+	 * Multiple sets of relations can be indexed if the user wishes to.
+	 * Such as relations between equal words in different languages, grammatical relations between words in the same sentence, etc.
+	 */
+	relClass: string;
+	/** The value of the relation. */
+	relType: string;
+
+	/** Inclusive index. Not present for root relations */
+	sourceStart?: number;
+	/** Exclusive index. Not present for root relations */
+	sourceEnd?: number;
+	/** Inclusive index */
+	targetStart: number;
+	/** Exclusive index */
+	targetEnd: number;
+
+	/** Smallest of sourceStart and targetStart */
+	start: number;
+	/** Smallest of targetStart and targetEnd */
+	end: number;
+}
+
+/**
+ * Usually when requesting all relations within a tag (with query parameter "context=s" when corpus contains <s/> tags for example)
+ * The infos will contain a multitude of RelationMatchRelation objects, each representing a relation between two tokens within the span.
+ * The start and end of the entirity of the span are also included.
+ */
+export interface BLRelationMatchList {
+	/**
+	 * Usually when requesting all relations within a tag (with query parameter "context=s" when corpus contains <s/> tags for example)
+	 * The infos will contain a multitude of RelationMatchRelation objects, each representing a relation between two tokens within the span.
+	 */
+	type: 'list';
+	start: number;
+	end: number;
+	infos: Array<BLRelationMatchRelation>
+}
+
+export type BLHit = BLHitSnippet&{
+	docPid: string;
+	start: number;
+	end: number;
+	/**
+	 * Contains the relevant info about <br>
+	 * A) capture groups: tokens with a label in the query, such as a:[pos="..."] would result in {a: {start: x, end: y, type: 'span'}})
+	 * B) relations: if querying for tokens with a relation (for example _ -obj-> _), the info about this relation and the (source, target) tokens are also stored here.
+	 * The above query could result for example in:
+	 *  obj: {
+	 *    type: "relation",
+     *    relClass: "dep",
+     *    relType: "obj",
+     *    sourceStart: 26,
+     *    sourceEnd: 27,
+     *    targetStart: 25,
+     *    targetEnd: 26,
+     *    start: 25,
+     *    end: 27
+	 *  }
+	 */
+	matchInfos?: {
+		context_rels?: BLRelationMatchList;
+	}&Record<string, BLRelationMatchSpan|BLRelationMatchRelation|BLRelationMatchTag>
+};
 
 /** Contains occurance counts of terms in the index */
 export interface BLTermOccurances {
@@ -440,7 +597,7 @@ export interface BLTermOccurances {
 	};
 }
 
-/** Contains all metadata for a document */
+/** Contains all metadata for a document. Fields without indexed values are omitted! */
 export type BLDocInfo = {
 	lengthInTokens: number;
 	mayView: boolean;
@@ -448,30 +605,26 @@ export type BLDocInfo = {
 	[key: string]: string[];
 };
 
+export type BLDoc = {
+	docInfo: BLDocInfo;
+	docPid: string;
+	/* Only when query was performed with a cql pattern */
+	numberOfHits?: number;
+	/* Only when query was performed with a cql pattern */
+	snippets?: BLHitSnippet[];
+}
+
 /** Blacklab response to a query for documents without grouping */
 export interface BLDocResults {
-	docs: Array<{
-		docInfo: BLDocInfo;
-		docPid: string;
-		/* Only when query was performed with a cql pattern */
-		numberOfHits?: number;
-		/* Only when query was performed with a cql pattern */
-		snippets?: BLHitSnippet[];
-	}>;
+	docs: BLDoc[];
 	/** All of the hit properties exist or none of them do, depending on whether a pattern was supplied */
 	summary: BLSearchSummary & BLSearchSummaryTotalsDocs & Partial<BLSearchSummaryTotalsHits>;
 }
 
 /** Blacklab response to a query for hits without grouping */
 export interface BLHitResults {
-	docInfos: {
-		[key: string]: BLDocInfo;
-	};
-	hits: Array<{
-		docPid: string;
-		end: number;
-		start: number;
-	} & BLHitSnippet>;
+	docInfos: Record<string, BLDocInfo>;
+	hits: BLHit[];
 	summary: BLSearchSummary & BLSearchSummaryTotalsHits;
 }
 

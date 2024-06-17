@@ -1,3 +1,6 @@
+// TODO split this file into patternUtils, groupUtils and generic utils.
+
+
 import URI from 'urijs';
 
 import * as BLTypes from '@/types/blacklabtypes';
@@ -57,19 +60,8 @@ export function unescapeLucene(original: string) {
 
 export function NaNToNull(n: number) { return isNaN(n) ? null : n; }
 
-/**
- * @param hit - the hit
- * @param prop - property of the context to retrieve, defaults to PROPS.firstMainProp (usually 'word')
- * @returns string[3] where [0] == before, [1] == hit and [2] == after, values are strings created by
- * concatenating and alternating the punctuation and values itself
- */
-export function snippetParts(hit: BLTypes.BLHitSnippet, prop: string): [string, string, string] {
-	const punctAfterLeft = hit.match.word.length > 0 ? hit.match.punct[0] : '';
-	const before = words(hit.left, prop, false, punctAfterLeft);
-	const match = words(hit.match, prop, false, '');
-	const after = words(hit.right, prop, true, '');
-	return [before, match, after];
-}
+
+
 
 /**
  * @param context
@@ -91,6 +83,11 @@ export function words(context: BLTypes.BLHitSnippetPart, prop: string, doPunctBe
 	return parts.join('');
 }
 
+/**
+ * Decode a value as passed to BlackLab back into a value for the UI.
+ * @param value the value to be parsed
+ * @param type the type that the value should be parsed to, see uiType in the annotation object. Different annotation search widgets have different escaping properties (i.e. can they contain multiple values, or just one, etc.)
+ */
 export const decodeAnnotationValue = (value: string|string[], type: Required<AppTypes.AnnotationValue>['type']): {case: boolean; value: string} => {
 	function isCase(v: string) { return v.startsWith('(?-i)') || v.startsWith('(?c)'); }
 	function stripCase(v: string) { return v.substr(v.startsWith('(?-i)') ? 5 : 4); }
@@ -129,6 +126,7 @@ export const decodeAnnotationValue = (value: string|string[], type: Required<App
 	}
 };
 
+/** Turn an annotation object into a "pattern" (cql) string ready for BlackLab. */
 export const getAnnotationPatternString = (annotation: AppTypes.AnnotationValue): string[] => {
 	const {id, case: caseSensitive, value, type} = annotation;
 
@@ -176,6 +174,7 @@ type SplitString = {
  * "split word" behind another few --> ["split word", "behind", "another", "few"]
  * "wild* in split words" and such --> ["wild.* in split words", "and", "such"]
  * @param v the input string.
+ * @param useQuoteDelimiters whether to use double quotes (") as delimiters or not. If not, the quotes are treated as regular characters.
  */
 export const splitIntoTerms = (value: string, useQuoteDelimiters: boolean): SplitString[]  => {
 	let i = 0;
@@ -312,7 +311,6 @@ export const splitIntoTerms = (value: string, useQuoteDelimiters: boolean): Spli
 		const expand = part.isQuoted ? 1 : 0;
 		if (fullValue.substring(part.start + expand, part.end - expand) !== value) {
 			console.log('part: ', part, 'expect: ', expect[index]);
-			debugger;
 		}
 	})
 });
@@ -331,9 +329,6 @@ export const getPatternString = (annotations: AppTypes.AnnotationValue[], within
 	return query || undefined;
 };
 
-// TODO the clientside url generation story... https://github.com/INL/corpus-frontend/issues/95
-// Ideally use absolute urls everywhere, if the application needs to be proxied, let the proxy server handle it.
-// Have a configurable url in the backend that's made available on the client that we can use here.
 export function getDocumentUrl(
 	pid: string,
 	cql?: string,
@@ -343,20 +338,6 @@ export function getDocumentUrl(
 	/** HACK: Find the hit starting with this word index on the page -- see ArticlePagination.vue */
 	findHit?: number
 ) {
-	let docUrl;
-	switch (new URI().filename()) {
-	case '':
-		docUrl = new URI('../../docs/');
-		break;
-	case 'docs':
-	case 'hits':
-		docUrl = new URI('../docs/');
-		break;
-	case 'search':
-	default: // some weird proxy?
-		docUrl = new URI('./docs/');
-		break;
-	}
 
 	cql = (cql || '').trim();
 	pattgapdata = (pattgapdata || '').trim();
@@ -365,22 +346,16 @@ export function getDocumentUrl(
 		pattgapdata = undefined;
 	}
 
-	return docUrl
-		.absoluteTo(new URI().toString())
-		.filename(pid)
-		.search({
-			// parameter 'query' controls the hits that are highlighted in the document when it's opened
-			query: cql || undefined,
-			pattgapdata: pattgapdata || undefined,
-			wordstart: pageSize != null ? (Math.floor(wordstart / pageSize) * pageSize) || undefined : undefined,
-			findhit: findHit
-		})
-		.toString();
+	return new URI()
+	.segment([CONTEXT_URL, INDEX_ID, 'docs', pid])
+	.search({
+		// parameter 'query' controls the hits that are highlighted in the document when it's opened
+		query: cql || undefined,
+		pattgapdata: pattgapdata || undefined,
+		wordstart: pageSize != null ? (Math.floor(wordstart / pageSize) * pageSize) || undefined : undefined,
+		findhit: findHit
+	}).toString();
 }
-
-export type MapOf<T> = {
-	[key: string]: T;
-};
 
 type KeysOfType<Base, Condition> = keyof Pick<Base, {
 	[Key in keyof Base]: Base[Key] extends Condition ? Key : never
@@ -391,16 +366,16 @@ type KeysOfType<Base, Condition> = keyof Pick<Base, {
  * @param k key to pick from the objects
  * @param m optional mapping function to transform the objects after picking the key
  */
-export function makeMapReducer<T, V extends (t: T, i: number) => any = (t: T, i: number) => T>(k: KeysOfType<T, string>, m?: V): (m: MapOf<ReturnType<V>>, t: T, i: number) => MapOf<ReturnType<V>> {
-	return (acc: MapOf<ReturnType<V>>, v: T, i: number): MapOf<ReturnType<V>> => {
+export function makeMapReducer<T, V extends (t: T, i: number) => any = (t: T, i: number) => T>(k: KeysOfType<T, string>, m?: V): (m: Record<string, ReturnType<V>>, t: T, i: number) => Record<string, ReturnType<V>> {
+	return (acc: Record<string, ReturnType<V>>, v: T, i: number): Record<string, ReturnType<V>> => {
 		const kv = v[k] as any as string;
 		acc[kv] = m ? m(v, i) : v;
 		return acc;
 	};
 }
 
-export function makeMultimapReducer<T, V extends (t: T, i: number) => any = (t: T, i: number) => T>(k: KeysOfType<T, string>, m?: V): (m: MapOf<Array<ReturnType<V>>>, t: T, i: number) => MapOf<Array<ReturnType<V>>> {
-	return (acc: MapOf<Array<ReturnType<V>>>, v: T, i: number): MapOf<Array<ReturnType<V>>> => {
+export function makeMultimapReducer<T, V extends (t: T, i: number) => any = (t: T, i: number) => T>(k: KeysOfType<T, string>, m?: V): (m: Record<string, Array<ReturnType<V>>>, t: T, i: number) => Record<string, Array<ReturnType<V>>> {
+	return (acc: Record<string, Array<ReturnType<V>>>, v: T, i: number): Record<string, Array<ReturnType<V>>> => {
 		const kv = v[k] as any as string;
 		acc[kv] ? acc[kv].push(m ? m(v, i) : v) : acc[kv] = [m ? m(v, i) : v];
 		return acc;
@@ -414,16 +389,16 @@ export function makeMultimapReducer<T, V extends (t: T, i: number) => any = (t: 
  * @param t the array of strings to place in a map.
  * @param m (optional) a mapping function to apply to values.
  */
-export function mapReduce<VS extends (t: string, i: number) => any = (t: string, i: number) => true>(t: string[]|undefined|null, m?: VS): MapOf<ReturnType<VS>>;
+export function mapReduce<VS extends (t: string, i: number) => any = (t: string, i: number) => true>(t: string[]|undefined|null, m?: VS): Record<string, ReturnType<VS>>;
 /**
  * Turn an array of type T[] into a map of type {[key: string]: T}.
- * Optionally mapping the values to be something other than "true".
+ * Optionally mapping the values to be something other than T.
  *
  * @param t the array of objects to place in a map.
  * @param k a key in the objects to use as key in the map.
  * @param m (optional) a mapping function to apply to values.
  */
-export function mapReduce<T, VT extends (t: T, i: number) => any = (t: T, i: number) => T>(t: T[]|undefined|null, k: KeysOfType<T, string>, m?: VT): MapOf<ReturnType<VT>>;
+export function mapReduce<T, VT extends (t: T, i: number) => any = (t: T, i: number) => T>(t: T[]|undefined|null, k: KeysOfType<T, string>, m?: VT): Record<string, ReturnType<VT>>;
 export function mapReduce<
 	T,
 	VT extends (t: T, i: number) => any = (t: T, i: number) => T,
@@ -436,7 +411,7 @@ export function mapReduce<
 	if (t && t.length > 0 && typeof t[0] === 'string') {
 		const values = t as string[];
 		const mapper = a as VS|undefined;
-		return values.reduce<MapOf<ReturnType<VS>>>((acc, cur, index) => {
+		return values.reduce<Record<string, ReturnType<VS>>>((acc, cur, index) => {
 			acc[cur] = mapper ? mapper(cur, index) : true;
 			return acc;
 		}, {});
@@ -456,7 +431,7 @@ export function mapReduce<
  * @param k a key in the objects to use as key in the map.
  * @param m (optional) a mapping function to apply to values.
  */
-export function multimapReduce<T, V extends (t: T, i: number) => any = (t: T, i: number) => T>(t: T[]|undefined|null, k: KeysOfType<T, string>, m?: V): MapOf<Array<ReturnType<V>>> {
+export function multimapReduce<T, V extends (t: T, i: number) => any = (t: T, i: number) => T>(t: T[]|undefined|null, k: KeysOfType<T, string>, m?: V): Record<string, Array<ReturnType<V>>> {
 	return t ? t.reduce(makeMultimapReducer<T, V>(k, m), {}) : {};
 }
 
@@ -477,7 +452,7 @@ export function filterDuplicates<T>(t: T[]|null|undefined, k: KeysOfType<T, stri
 export function fieldSubset<T extends {id: string}>(
 	ids: string[],
 	groups: Array<{id: string, entries: string[]}>,
-	fields: MapOf<T>,
+	fields: Record<string, T>,
 	addAllToOneGroup?: string
 ): Array<{id: string, entries: T[]}> {
 	let ret: Array<{id: string, entries: T[]}> = groups
@@ -506,7 +481,7 @@ export function fieldSubset<T extends {id: string}>(
 export function getMetadataSubset<T extends {id: string, displayName: string}>(
 	ids: string[],
 	groups: AppTypes.NormalizedMetadataGroup[],
-	metadata: MapOf<T>,
+	metadata: Record<string, T>,
 	operation: 'Sort'|'Group',
 	debug = false,
 	/* show the <small/> labels at the end of options labels? */
@@ -522,7 +497,7 @@ export function getMetadataSubset<T extends {id: string, displayName: string}>(
 		const displaySuffixHtml = showGroupLabels && groupId ? `<small class="text-muted">${groupId}</small>` : '';
 		const r: AppTypes.Option[] = [];
 		r.push({
-			value: `field:${value}`,
+			value: operation === 'Sort' ? `field:${value}` : value, // groupby prepends field: on its own
 			label: `${operation} by ${displayNameHtml} ${displayIdHtml} ${displaySuffixHtml}`,
 		});
 		if (operation === 'Sort') {
@@ -559,9 +534,9 @@ export function getMetadataSubset<T extends {id: string, displayName: string}>(
 export function getAnnotationSubset(
 	ids: string[],
 	groups: AppTypes.NormalizedAnnotationGroup[],
-	annotations: MapOf<AppTypes.NormalizedAnnotation>,
+	annotations: Record<string, AppTypes.NormalizedAnnotation>,
 	operation: 'Search'|'Sort'|'Group',
-	corpusTextDirection: 'rtl'|'ltr',
+	corpusTextDirection: 'rtl'|'ltr' = 'ltr',
 	debug = false,
 	/* show the <small/> labels at the end of options labels? */
 	showGroupLabels = true
@@ -616,3 +591,115 @@ export function getAnnotationSubset(
 		})
 	}));
 }
+
+export function uniq<T>(l: T[]): T[] {return Array.from(new Set(l)).sort() }
+
+/** Compile time checking: ensure the passed parameter is of the template type and return it (no-op).
+ * Can use while setting variables initial value for example. */
+export function cast<T>(t: T): T { return t; }
+
+export const uiTypeSupport: {[key: string]: {[key: string]: Array<AppTypes.NormalizedAnnotation['uiType']>}} = {
+	search: {
+		simple: ['combobox', 'select', 'lexicon'],
+		extended: ['combobox', 'select', 'pos'],
+	},
+	explore: {
+		ngram: ['combobox', 'select']
+	}
+};
+
+export function getCorrectUiType<T extends AppTypes.NormalizedAnnotation['uiType']>(allowed: T[], actual: T): T {
+	return allowed.includes(actual) ? actual : 'text' as any;
+}
+
+import type {ModuleRootState as ModuleRootStateExplore} from '@/store/search/form/explore';
+import type {ModuleRootState as ModuleRootStateSearch} from '@/store/search/form/patterns';
+import cloneDeep from 'clone-deep';
+export function getPatternStringExplore(
+	subForm: keyof ModuleRootStateExplore,
+	state: ModuleRootStateExplore,
+	annots: Record<string, AppTypes.NormalizedAnnotation>
+): string|undefined {
+	switch (subForm) {
+		case 'corpora': return undefined;
+		case 'frequency': return '[]';
+		case 'ngram': return state.ngram.tokens
+				.slice(0, state.ngram.size)
+				// type select because we only ever want to output one cql token per n-gram input
+				.map(token => {
+					const tokenType = annots[token.id].uiType;
+					const correctedType = getCorrectUiType(uiTypeSupport.explore.ngram, tokenType);
+
+					return token.value ? `[${token.id}="${escapeRegex(token.value, correctedType !== 'select').replace(/"/g, '\\"')}"]` : '[]';
+				})
+				.join('');
+		default: throw new Error('Unknown submitted form - cannot generate cql query');
+	}
+}
+export function getPatternStringSearch(
+	subForm: keyof ModuleRootStateSearch,
+	state: ModuleRootStateSearch,
+	annots: Record<string, AppTypes.NormalizedAnnotation>
+): string|undefined {
+	// For the normal search form,
+	// the simple and extended views require the values to be processed before converting them to cql.
+	// The advanced and expert views already contain a good-to-go cql query. We only need to take care not to emit an empty string.
+	switch (subForm) {
+		case 'simple': return state.simple.value && getPatternString([state.simple], null);
+		case 'extended': {
+			const r = cloneDeep(Object.values(state.extended.annotationValues))
+				.filter(annot => !!annot.value)
+				.map(annot => ({
+					...annot,
+					type: getCorrectUiType(uiTypeSupport.search.extended, annot.type!)
+				}));
+			return r.length ? getPatternString(r, state.extended.within) : undefined;
+		}
+		case 'advanced': return state.advanced?.trim() || undefined;
+		case 'expert': return state.expert?.trim() || undefined;
+		case 'concept': return state.concept?.trim() || undefined;
+		case 'glosses': return state.glosses?.trim() || undefined;
+		default: throw new Error('Unimplemented pattern generation.');
+	}
+
+}
+
+export function getPatternSummaryExplore<K extends keyof ModuleRootStateExplore>(
+	subForm: K,
+	state: ModuleRootStateExplore,
+	annots: Record<string, AppTypes.NormalizedAnnotation>
+): string|undefined {
+	switch (subForm) {
+		case 'corpora': return undefined;
+		case 'frequency': return `${annots[state.frequency.annotationId].displayName} frequency`;
+		case 'ngram': return `${annots[state.ngram.groupAnnotationId].displayName} ${state.ngram.size}-grams`
+		default: return undefined;
+	}
+}
+export function getPatternSummarySearch<K extends keyof ModuleRootStateSearch>(
+	subForm: K,
+	state: ModuleRootStateSearch,
+) {
+	// For the normal search form,
+	// the simple and extended views require the values to be processed before converting them to cql.
+	// The advanced and expert views already contain a good-to-go cql query. We only need to take care not to emit an empty string.
+	switch (subForm) {
+		case 'simple': return state.simple.value || undefined;
+		case 'extended': {
+			const annotations: AppTypes.AnnotationValue[] = cloneDeep(Object.values(state.extended.annotationValues).filter(annot => !!annot.value))
+				.map(annot => ({
+					...annot,
+					type: getCorrectUiType(uiTypeSupport.search.extended, annot.type!)
+				}));
+			if (annotations.length === 0) { return undefined; }
+			// remove escape backslashes as this is just a summary
+			return getPatternString(annotations, state.extended.within)?.replace(/\\(.)/g, '$1');
+		}
+		case 'advanced': return state.advanced?.trim() || undefined;
+		case 'expert': return state.expert?.trim() || undefined;
+		case 'concept': return state.concept || undefined;
+		case 'glosses': return state.glosses || undefined;
+		default: return undefined;
+	}
+}
+

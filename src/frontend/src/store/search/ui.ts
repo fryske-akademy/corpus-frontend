@@ -6,18 +6,26 @@
  * Configure from external javascript through window.vuexModules.ui.getState() and assign things.
  */
 
+import Vue from 'vue';
 import cloneDeep from 'clone-deep';
 import { getStoreBuilder } from 'vuex-typex';
+import { stripIndent, html } from 'common-tags';
 
 import { RootState } from '@/store/search/';
 import * as CorpusStore from '@/store/search/corpus';
+import * as ViewsStore from '@/store/search/results/views';
 import * as BLTypes from '@/types/blacklabtypes';
 import * as AppTypes from '@/types/apptypes';
-import { mapReduce, MapOf, multimapReduce } from '@/utils';
-import { stripIndent, html } from 'common-tags';
 
-declare const PROPS_IN_COLUMNS: string[];
-declare const PAGESIZE: number|undefined;
+type CustomView = {
+	id: string;
+	/** Label shown in result tabs */
+	label?: string;
+	/** Title shown when hovering over tab */
+	title: string;
+	/** Vue component name or a compiled component. */
+	component: string|Vue.Component;
+}
 
 type ModuleRootState = {
 	search: {
@@ -28,14 +36,6 @@ type ModuleRootState = {
 			searchAnnotationIds: string[],
 			splitBatch: {
 				enabled: boolean;
-			};
-			within: {
-				enabled: boolean;
-				elements: Array<{
-					title: string|null;
-					label: string;
-					value: string;
-				}>;
 			};
 		};
 		advanced: {
@@ -56,6 +56,25 @@ type ModuleRootState = {
 			 * This remains a bit of a TODO but it requires some deep thinking and architectural changes.
 			 */
 			searchMetadataIds: string[];
+			customAnnotations: Record<string, null|{
+				render(config: AppTypes.NormalizedAnnotation, state: AppTypes.AnnotationValue, vue: typeof Vue): HTMLElement|JQuery<HTMLElement>|string|Vue,
+				update(newState: AppTypes.AnnotationValue, oldState: AppTypes.AnnotationValue, element: HTMLElement): void
+			}>;
+
+			within: {
+				enabled: boolean;
+				elements: Array<{
+					title: string|null;
+					label: string;
+					value: string;
+				}>;
+				/**
+				 * What element denotes sentence boundaries.
+				 * Used when (for example) requesting surrounding context in the dependency tree.
+				 * Defaults to the first element in the within.elements array, but null if none are defined.
+				 */
+				sentenceElement: string|null;
+			};
 		}
 	};
 
@@ -103,16 +122,11 @@ type ModuleRootState = {
 			addons: Array<((context: {
 				corpus: string,
 				docId: string,
-				snippet: BLTypes.BLHitSnippet,
 				document: BLTypes.BLDocInfo,
 				documentUrl: string,
 				wordAnnotationId: string,
 				dir: 'ltr'|'rtl',
-				citation: {
-					left: string;
-					hit: string;
-					right: string;
-				}
+				citation: BLTypes.BLHitSnippet
 			}) => {
 				name: string;
 				component?: string;
@@ -131,11 +145,15 @@ type ModuleRootState = {
 			shownMetadataIds: string[];
 		};
 
+		customViews: CustomView[],
+
 		shared: {
 			/** What annotation to use for displaying of [before, hit, after] and snippets. Conventionally the main annotation. */
 			concordanceAnnotationId: string;
 			/** Optionally run a function on all retrieved snippets to arbitrarily process the data (we use this to format the values in some annotations for display purposes). */
-			transformSnippets: null|((snippet?: BLTypes.BLHitSnippet|BLTypes.BLHitSnippet[]) => void);
+			transformSnippets: null|((snippet: BLTypes.BLHitSnippet) => void);
+			/** Size of the details hit (number of words loaded before/after the hit when expanding a hit result). Max 1000 */
+			concordanceSize: number;
 			concordanceAsHtml: boolean;
 			getDocumentSummary: ((doc: BLTypes.BLDocInfo, fields: BLTypes.BLDocFields) => string);
 
@@ -178,6 +196,14 @@ type ModuleRootState = {
 			totalsTimeoutDurationMs: number;
 			/** Polling interval for the above. Default 2 seconds. Minimum 100ms. */
 			totalsRefreshIntervalMs: number;
+
+			/** Which annotations should be shown in the dependency tree. (for corpora with dependencies indexed) */
+			dependencies: {
+				lemma: string|null;
+				upos: string|null;
+				xpos: string|null;
+				feats: string|null;
+			}
 		};
 	};
 
@@ -218,10 +244,6 @@ const initialState: ModuleRootState = {
 			splitBatch: {
 				enabled: true,
 			},
-			within: {
-				enabled: true,
-				elements: [],
-			},
 		},
 		advanced: {
 			enabled: true,
@@ -232,6 +254,13 @@ const initialState: ModuleRootState = {
 
 		shared: {
 			searchMetadataIds: [],
+			customAnnotations: {},
+
+			within: {
+				enabled: true,
+				elements: [],
+				sentenceElement: null
+			},
 		}
 	},
 	explore: {
@@ -250,8 +279,20 @@ const initialState: ModuleRootState = {
 		docs: {
 			shownMetadataIds: [],
 		},
+		// we have to do this here already, otherwise these views would be undefined during customjs evaluation.
+		// (which is done before the store is initialized)
+		customViews: [{
+			id: 'hits',
+			title: 'Per Hit',
+			component: 'ResultsView'
+		}, {
+			id: 'docs',
+			title: 'Per Document',
+			component: 'ResultsView'
+		}],
 		shared: {
 			concordanceAnnotationId: '',
+			concordanceSize: 50,
 			transformSnippets: null,
 			concordanceAsHtml: false,
 			getDocumentSummary: (doc: BLTypes.BLDocInfo, fields: BLTypes.BLDocFields): string => {
@@ -265,11 +306,18 @@ const initialState: ModuleRootState = {
 			groupMetadataIds: [],
 			sortAnnotationIds: [],
 			sortMetadataIds: [],
-			pageSize: PAGESIZE,
+			pageSize: PAGE_SIZE,
 			exportEnabled: true,
 
 			totalsTimeoutDurationMs: 90_000,
-			totalsRefreshIntervalMs: 2_000
+			totalsRefreshIntervalMs: 2_000,
+
+			dependencies: {
+				feats: null,
+				lemma: null,
+				upos: null,
+				xpos: null
+			}
 		}
 	},
 	global: {
@@ -316,6 +364,14 @@ const get = {
 
 };
 
+const privateActions = {
+	search: {
+		shared: {
+			initCustomAnnotationRegistrationPoint: b.commit((state, id: string) => Vue.set(state.search.shared.customAnnotations, id, state.search.shared.customAnnotations[id] ?? null), 'search_shared_initCustomAnnotation')
+		}
+	}
+}
+
 const actions = {
 	search: {
 		simple: {},
@@ -329,34 +385,13 @@ const actions = {
 			splitBatch: {
 				enable: b.commit((state, payload: boolean) => state.search.extended.splitBatch.enabled = payload, 'search_extended_splitbatch_enable'),
 			},
-			within: {
-				enable: b.commit((state, payload: boolean) => state.search.extended.within.enabled = payload, 'search_extended_within_enable'),
-				elements: b.commit((state, payload: ModuleRootState['search']['extended']['within']['elements']) => {
-					// explicitly retrieve this annotations as it's supposed to be internal and thus not included in any getters.
-					if (payload.findIndex(v => v.value === '') === -1) {
-						payload.unshift({
-							value: '',
-							label: 'Document',
-							title: null
-						});
-					}
-					const annot = CorpusStore.get.allAnnotationsMap().starttag;
-					const validValuesMap = mapReduce(annot ? annot.values : undefined, 'value');
-					validValuesMap[''] = validValuesMap[''] || {
-						value: '',
-						label: 'Document',
-						title: null
-					};
 
-					state.search.extended.within.elements = payload.filter(v => {
-						const valid = v.value in validValuesMap;
-						if (!valid) { console.warn(stripIndent`
-							Trying to register element name ${v.value} for 'within' clause, but it doesn't exist in the index.
-							This might happen when there are too many tags recorded in the index, but also when it just doesn't occur (or tags aren't indexed).`);
-						}
-						return valid;
-					});
-				}, 'search_extended_within_annotations'),
+			/** @deprecated 9-04-2024 backwards compatibility. Moved to search.shared.within */
+			within: {
+				/** @deprecated 9-04-2024 backwards compatibility. Moved to search.shared.within */
+				enable: (p: boolean) => actions.search.shared.within.enable(p),
+				/** @deprecated 9-04-2024 backwards compatibility. Moved to search.shared.within */
+				elements: (e: ModuleRootState['search']['shared']['within']['elements']) => actions.search.shared.within.elements(e)
 			},
 		},
 		advanced: {
@@ -391,7 +426,24 @@ const actions = {
 				id => `Trying to display metadata field '${id}' in the filters section, but it does not exist.`,
 				_ => true, _ => '',
 				r => state.search.shared.searchMetadataIds = r
-			), 'search_shared_searchMetadataIds')
+			), 'search_shared_searchMetadataIds'),
+			within: {
+				enable: b.commit((state, payload: boolean) => state.search.shared.within.enabled = payload, 'search_shared_within_enable'),
+				elements: b.commit((state, payload: ModuleRootState['search']['shared']['within']['elements']) => {
+					if (payload.findIndex(v => v.value === '') === -1) {
+						payload.unshift({
+							value: '',
+							label: 'Document',
+							title: null
+						});
+					}
+					state.search.shared.within.elements = payload;
+				}, 'search_shared_within_annotations'),
+				sentenceElement: b.commit((state, payload: string|null) => {
+					if (state.search.shared.within.elements.findIndex(e => e.value === payload) >= 0 )
+						state.search.shared.within.sentenceElement = payload;
+				}, 'search_shared_within_sentenceElement')
+			},
 		}
 	},
 	explore: {
@@ -454,6 +506,20 @@ const actions = {
 				r => state.results.docs.shownMetadataIds = r
 			), 'docs_shownMetadataIds')
 		},
+		addResultView: b.commit((state, view: CustomView&{customInitialState: any}) => {
+			if (!state.results.customViews.find(v => v.id === view.id)) {
+				ViewsStore.getOrCreateModule(view.id);
+				state.results.customViews.push(view);
+			}
+		}, 'registerCustomView'),
+		removeResultView: b.commit((state, viewId: string) => {
+			const index = state.results.customViews.findIndex(v => v.id === viewId);
+			if (index !== -1) {
+				state.results.customViews.splice(index, 1);
+			} else {
+				console.warn(`[results.removeResultView] - Trying to remove custom view '${viewId}', but it doesn't exist!`);
+			}
+		}, 'removeCustomView'),
 		shared: {
 			concordanceAnnotationId: b.commit((state, id: string) => validateAnnotations([id],
 				_ => `Trying to display Annotation '${id}' as concordance and snippet text, but it does not exist`,
@@ -462,6 +528,8 @@ const actions = {
 				r => state.results.shared.concordanceAnnotationId = id
 			), 'shared_concordanceAnnotationId'),
 			concordanceAsHtml: b.commit((state, enable: boolean) => state.results.shared.concordanceAsHtml = enable, 'shared_concordanceAsHtml'),
+			concordanceSize: b.commit((state, size: number) => state.results.shared.concordanceSize = Math.min(Math.max(0, size), 1000), 'shared_concordanceSize'),
+			transformSnippets: b.commit((state, transform: (snippet: BLTypes.BLHitSnippet) => void) => state.results.shared.transformSnippets = transform, 'shared_transformSnippets'),
 
 			detailedAnnotationIds: b.commit((state, ids: string[]|null) => {
 				if (ids != null) {
@@ -541,7 +609,26 @@ const actions = {
 			totalsRefreshIntervalMs: b.commit((state, intervalMs: number) => {
 				const n = Number(intervalMs);
 				state.results.shared.totalsRefreshIntervalMs = isNaN(n) ? 2_000 : Math.max(100, n);
-			}, 'totalsRefreshIntervalMs')
+			}, 'totalsRefreshIntervalMs'),
+
+			/** Edit which annotations are shown in the dependency tree in the hits result table. */
+			dependencies: b.commit((state, payload: { lemma: string|null, upos: string|null, xpos: string|null, feats: string|null }) => {
+				const allAnnotations= CorpusStore.get.allAnnotationsMap();
+				const storeIsInitialized = Object.keys(allAnnotations).length > 0;
+				const validate = (id: string|null): string|null => {
+					if (!storeIsInitialized) return id; // validate in this module's init() function. allow for now.
+					if (id == null || allAnnotations[id]?.hasForwardIndex) return id;
+					if (!allAnnotations[id]) console.warn(`[results.shared.dependencies] - Trying to show dependency tree with annotation '${id}', but it does not exist.`);
+					if (!allAnnotations[id]?.hasForwardIndex) console.warn(`[results.shared.dependencies] - Trying to show dependency tree with annotation '${id}', but it does not have the required forward index.`);
+					return null;
+				}
+				state.results.shared.dependencies = {
+					lemma: validate(payload.lemma),
+					upos: validate(payload.upos),
+					xpos: validate(payload.xpos),
+					feats: validate(payload.feats)
+				};
+			}, 'dependencies')
 		}
 	},
 	global: {
@@ -608,51 +695,73 @@ const actions = {
 	}
 };
 
+/**
+ * This function is not great.
+ * The issue is that customjs can call our setters before we know the corpus shape (because that's loaded async).
+ * When this happens, we store those settings in the initialState.
+ * But when the corpus is loaded, we have to validate those settings.
+ * It would be better to queue up the setters until we have loaded the corpus, but that's complex.
+ * It would be even better to get rid of customjs, or at least have it evaluate after the corpus is loaded
+ * Perhaps it could just return a json object that we can use to configure the store.
+ * But that's a future refactor. It would be most useful to do before we migrate to vue 3.
+ *
+ * There's no real way to get around this validation for now.
+ * If we didnt't do this, and someone made a typo in their setup javascript and sets a nonexistant annotation somewhere the page would probably crash.
+ *
+ *
+ * Store initialization happens in 3 steps:
+ * - initial construction:
+ *   this happens immediately when the script is evaluated.
+ *   This is when the initialState objects are created. (hence the workaround in this module's getState())
+ * - customization:
+ *   CustomJs scripts load and can interact with the UI module
+ * - init() function: CustomJs should now have done all its edits,
+ *   and changes are validated and persisted into the initialState objects.
+ *   This is where we are now.
+ *
+ */
 const init = () => {
-	// Store can be configured by user scripts.
-	// This should have happened before this code runs.
-	// Now set the defaults based on what is configured.
-	// Then detect any parts that haven't been configured, and set them to some sensible defaults.
-	// Also validate the configured settings, and replace with defaults where invalid.
-	Object.assign(initialState, cloneDeep(getState()));
+	if (!CorpusStore.getState().corpus) throw new Error('Cannot initialize UI module before corpus is loaded');
+
+	// XXX: hack!
+	/**
+	 * If we don't do this, imagine the following
+	 *
+	 * initialState.some_annotation_list = ['some_invalid_id']
+	 *
+	 * // we think this will validate, but what actually happens is that the setter is called,
+	 * // the value is deemed invalid, and nothing happens
+	 * // the net result is that value is still ['some_invalid_id']
+	 * // and the app will crash when it tries to use that value
+	 * actions.some_annotation_list(initialState.some_annotation_list)
+	 *
+	 * // instead we set this, so the validator will just return an empty array, and the setting will becomed either [] or undefined, which is fine
+	 * // we can then detect this during init, and replace the setting with the default.
+	 */
+	alwaysCallbackAfterValidating = true;
+
+
+
+	// ====================
+	// Set up some defaults
+	// ====================
 
 	const allAnnotationsMap = CorpusStore.get.allAnnotationsMap();
 	const allMetadataFieldsMap = CorpusStore.get.allMetadataFieldsMap();
 	const annotationGroups = CorpusStore.get.annotationGroups();
 	const metadataGroups = CorpusStore.get.metadataGroups();
-
 	const mainAnnotation = CorpusStore.get.firstMainAnnotation();
 
 	// Annotations (extended, advanced, explore [n-grams], sorting, grouping, hit details)
 	// If unconfigured, show the following annotations:
 	// - Those in non-remainder groups (which are the user-configured groups)
 	// - Non-internal annotations in the remainder group (which is the catch-all/fallback group), iff there are no other groups.
-	let defaultAnnotationsToShow = annotationGroups.flatMap((g, i) => {
+	const defaultAnnotationsToShow = annotationGroups.flatMap((g, i) => {
 		if (!g.isRemainderGroup) { return g.entries; }
 		const hasNonRemainderGroup = i > 0; // remainder groups is always at the end
-		return hasNonRemainderGroup ? [] : g.entries.filter(id => !allAnnotationsMap[id].isInternal);
+		// remainder group is hidden unless there's no other group. Also internal annotations in the remainder group are always hidden.
+		return hasNonRemainderGroup ? [] : g.entries.filter(id => allAnnotationsMap[id]?.isInternal === false);
 	});
-
-	let cur: string[];
-	// Always remove any possible bogus annotations set by invalid configs
-	// And then replace with default values if not configured
-	cur = initialState.search.extended.searchAnnotationIds.filter(id => allAnnotationsMap[id]); // remove invalid entries
-	actions.search.extended.searchAnnotationIds(cur.length ? cur : defaultAnnotationsToShow); // replace with corrected settings
-
-	cur = initialState.search.advanced.searchAnnotationIds.filter(id => allAnnotationsMap[id]);
-	actions.search.advanced.searchAnnotationIds(cur.length ? cur : defaultAnnotationsToShow);
-
-	cur = initialState.explore.searchAnnotationIds.filter(id => allAnnotationsMap[id]);
-	actions.explore.searchAnnotationIds(cur.length ? cur : defaultAnnotationsToShow);
-
-	// Remove annotations without forward index, as grouping/sorting isn't supported for those
-	defaultAnnotationsToShow = defaultAnnotationsToShow.filter(id => allAnnotationsMap[id].hasForwardIndex);
-
-	cur = initialState.results.shared.groupAnnotationIds.filter(id => allAnnotationsMap[id].hasForwardIndex);
-	actions.results.shared.groupAnnotationIds(cur.length ? cur : defaultAnnotationsToShow);
-
-	cur = initialState.results.shared.sortAnnotationIds.filter(id => allAnnotationsMap[id].hasForwardIndex);
-	actions.results.shared.sortAnnotationIds(cur.length ? cur : defaultAnnotationsToShow);
 
 	// Metadata/filters (extended, advanced, expert, explore)
 	// If unconfigured: show all metadata in groups (groups are defined in the index format yaml file)
@@ -662,57 +771,89 @@ const init = () => {
 		return hasNonRemainderGroup ? [] : g.entries;
 	});
 
-	cur = initialState.search.shared.searchMetadataIds.filter(id => allMetadataFieldsMap[id]);
-	actions.search.shared.searchMetadataIds(cur.length ? cur : defaultMetadataToShow);
+	// So: CustomJS has finished interacting with this module, now propagate changes back to the defaults, and validate all settings.
+	Object.assign(initialState, cloneDeep(getState()));
 
-	cur = initialState.results.shared.groupMetadataIds.filter(id => allMetadataFieldsMap[id]);
-	actions.results.shared.groupMetadataIds(cur.length ? cur : defaultMetadataToShow);
+	// ============================================
+	// Now validate the settings one by one (ugh..)
+	// ============================================
 
-	cur = initialState.results.shared.sortMetadataIds.filter(id => allMetadataFieldsMap[id]);
-	actions.results.shared.sortMetadataIds(cur.length ? cur : defaultMetadataToShow);
+	// SEARCH
 
-	// "within"
-	if (!initialState.search.extended.within.elements.length) {
-		// explicitly retrieve this annotations as it's supposed to be internal and thus not included in any getters.
-		const annot = allAnnotationsMap.starttag;
-		const validValues = cloneDeep(annot && annot.values ? annot.values : []);
-		validValues.forEach(v => {
-			if (!v.label.trim() || v.label === v.value) {
-				if (v.value === 'p') { v.label = 'paragraph'; }
-				else if (v.value === 's') { v.label = 'sentence'; }
-				else if (!v.value) { v.label = 'document'; }
-				else { v.label = v.value; }
-			}
-		});
+	// Always remove any possible bogus annotations set by invalid configs
+	// And then replace with default values if not configured
+	// The setters have builtin validation. So call them, then check if a valid was set, and if not, replace with default.
+	actions.search.extended.searchAnnotationIds(initialState.search.extended.searchAnnotationIds);
+	if (!getState().search.extended.searchAnnotationIds.length) actions.search.extended.searchAnnotationIds(defaultAnnotationsToShow);
 
-		if (validValues.length) {
+	actions.search.advanced.searchAnnotationIds(initialState.search.advanced.searchAnnotationIds);
+	if (!getState().search.advanced.searchAnnotationIds.length) actions.search.advanced.searchAnnotationIds(defaultAnnotationsToShow);
+	// no need to check defaultSearchAnnotationId, is corrected in the setter already
+
+	actions.search.shared.searchMetadataIds(initialState.search.shared.searchMetadataIds);
+	if (!getState().search.shared.searchMetadataIds.length) actions.search.shared.searchMetadataIds(defaultMetadataToShow);
+
+	// "within" selector (i.e. search within paragraphs/sentences/documents, whatever else is indexed (called "inline tags" in BlackLab)).
+	if (!initialState.search.shared.within.elements.length) {
+		function setValuesForWithin(validValues?: AppTypes.NormalizedAnnotation['values']) {
+			if (!validValues?.length) {
+				console.warn('Within clause not supported in this corpus, no relations indexed');
+				actions.search.shared.within.enable(false);
+				return;
+			};
+
+			validValues.forEach(v => {
+				if (!v.label.trim() || v.label === v.value) {
+					if (v.value === 'p') { v.label = 'paragraph'; }
+					else if (v.value === 's') { v.label = 'sentence'; }
+					else if (!v.value) { v.label = 'document'; }
+					else { v.label = v.value; }
+				}
+			});
+
 			if (validValues.length <= 6) { // an arbitrary limit
-				actions.search.extended.within.elements(validValues);
+				actions.search.shared.within.elements(validValues);
 			} else {
 				console.warn(`Within clause can contain ${validValues.length} different values, ignoring...`);
 			}
-		} else {
-			console.warn('Within clause not supported in this corpus, no starttags indexed');
-			actions.search.extended.within.enable(false);
+		}
+
+		// blacklab 4.0 removed the 'starttag' annotation. We have to retrieve values from the relations object instead
+		const relations = CorpusStore.getState().corpus!.relations;
+		setValuesForWithin(Object.keys(relations.spans||{}).map(v => ({value: v, label: v, title: null})));
+
+		// Set default sentence boundary element. For use with dependency trees and getting the sentence around a hit.
+		const state = getState(); // since we did it async, the init is already finished, and the data we set is not in the initial state anymore.
+		if (!getState().search.shared.within.sentenceElement && getState().search.shared.within.elements.length) {
+			const labelsOrValues = ['sentence', 's', 'sen', 'sent', 'paragraph', 'p', 'par', 'para', 'verse'];
+			// process the labels in order or preference.
+			const defaultWithin = labelsOrValues.flatMap(l => state.search.shared.within.elements.find(e => e.label.includes(l) || e.value.includes(l)) || [])[0]
+			if (defaultWithin) {
+				actions.search.shared.within.sentenceElement(defaultWithin.value);
+			}
 		}
 	}
 
-	// ====================
-	// Results manipulation
-	// ====================
+	// EXPLORE
 
-	// Annotations (display in the table columns, display in opened condordances)
-	// Sorting/grouping: show all annotations in groups and that have a forward index (blacklab doesn't support sorting/grouping without FI)
+	actions.explore.searchAnnotationIds(initialState.explore.searchAnnotationIds);
+	if (!getState().explore.searchAnnotationIds.length) actions.explore.searchAnnotationIds(defaultAnnotationsToShow);
+	// no need to check defaultSearchAnnotationId, already done in the setter
+	// no need to check defaultGroupAnnotationId, already done in the setter
+	// no need to check defualtGroupMetadataId, done in shared groupMetadataIds setter
 
-	// Results table columns
+	// RESULTS
+
+	// annotation ids in the results table follow their own rules
 	// Show 'lemma' and 'pos' (if they exist) and up to 3 more annotations in order of definition
 	// OR: show based on PROPS_IN_COLUMNS [legacy support] (configured in this corpus's search.xml)
-	if (!initialState.results.hits.shownAnnotationIds.length) {
-		const shownAnnotations = PROPS_IN_COLUMNS.filter(annot => allAnnotationsMap[annot] != null && allAnnotationsMap[annot].hasForwardIndex && annot !== mainAnnotation.id);
+	actions.results.hits.shownAnnotationIds(initialState.results.hits.shownAnnotationIds);
+	if (!getState().results.hits.shownAnnotationIds.length) {
+		const shownAnnotations = PROPS_IN_COLUMNS.filter(annot => allAnnotationsMap[annot]?.hasForwardIndex && annot !== mainAnnotation.id);
 		if (!shownAnnotations.length) {
 			// These have precedence if they exist.
-			if (allAnnotationsMap.lemma != null && allAnnotationsMap.lemma.hasForwardIndex) { shownAnnotations.push('lemma'); }
-			if (allAnnotationsMap.pos != null && allAnnotationsMap.pos.hasForwardIndex) { shownAnnotations.push('pos'); }
+			if (allAnnotationsMap.lemma?.hasForwardIndex) { shownAnnotations.push('lemma'); }
+			if (allAnnotationsMap.pos?.hasForwardIndex) { shownAnnotations.push('pos'); }
 
 			// Now add other annotations until we hit 3 annotations.
 			defaultAnnotationsToShow
@@ -725,31 +866,93 @@ const init = () => {
 		}
 		actions.results.hits.shownAnnotationIds(shownAnnotations);
 	}
-	// Concordances show all non-internal annotations when not set.
 
-	// Displaying of result context/snippets
-	if (!initialState.results.shared.concordanceAnnotationId) {
-		actions.results.shared.concordanceAnnotationId(mainAnnotation.hasForwardIndex ? mainAnnotation.id : defaultAnnotationsToShow[0]);
-	}
-
-	// Results table columns
-	// Hits table: Never show any metadata in the hits table
+	// Hits table, nothing shown by default, but call the setter to validate what was set.
+	actions.results.hits.shownMetadataIds(initialState.results.hits.shownMetadataIds);
 	// Docs table: Show the date column if it is configured
-	if (!initialState.results.docs.shownMetadataIds.length) {
-		const dateField = CorpusStore.getState().fieldInfo.dateField;
+	if (!getState().results.docs.shownMetadataIds.length) {
+		const dateField = CorpusStore.getState().corpus!.fieldInfo.dateField;
 		if (dateField) {
 			actions.results.docs.shownMetadataIds([dateField]);
 		}
 	}
 
+	// SHARED
+
+	// This one needs manual validation, because the setter just won't do anything if the id is invalid.
+	// And then the invalid id will remain in the state.
+	{
+		const annot = allAnnotationsMap[initialState.results.shared.concordanceAnnotationId];
+		if (!annot?.hasForwardIndex)
+			actions.results.shared.concordanceAnnotationId(mainAnnotation.hasForwardIndex ? mainAnnotation.id : defaultAnnotationsToShow.find(id => allAnnotationsMap[id]?.hasForwardIndex)!);
+	}
+
+	actions.results.shared.concordanceSize(Math.min(Math.max(1, initialState.results.shared.concordanceSize), 1000));
+
+	actions.results.shared.detailedAnnotationIds(initialState.results.shared.detailedAnnotationIds);
+	if (!getState().results.shared.detailedAnnotationIds?.length) actions.results.shared.detailedAnnotationIds(null);
+
+	actions.results.shared.detailedMetadataIds(initialState.results.shared.detailedMetadataIds);
+	// no default for this one.
+
+	actions.results.shared.groupAnnotationIds(initialState.results.shared.groupAnnotationIds);
+	if (!getState().results.shared.groupAnnotationIds.length) actions.results.shared.groupAnnotationIds(defaultAnnotationsToShow);
+
+	actions.results.shared.groupMetadataIds(initialState.results.shared.groupMetadataIds);
+	if (!getState().results.shared.groupMetadataIds.length) actions.results.shared.groupMetadataIds(defaultMetadataToShow);
+
+	actions.results.shared.sortAnnotationIds(initialState.results.shared.sortAnnotationIds);
+	if (!getState().results.shared.sortAnnotationIds.length) actions.results.shared.sortAnnotationIds(defaultAnnotationsToShow);
+
+	actions.results.shared.sortMetadataIds(initialState.results.shared.sortMetadataIds);
+	if (!getState().results.shared.sortMetadataIds.length) actions.results.shared.sortMetadataIds(defaultMetadataToShow);
+
+
+	/* Validate the annotations shown in the dependency tree in the hits result table.
+	 * If none are set, search for likely annotations to map to the connlu properties in the tree.
+	 * find all likely matches, then dedupe them.
+	 * Null values won't shown anything.
+	 * The word property itself is hardcoded to be the same as the concordance (i.e. words shown in the hit), so we don't need to configure that.
+	 */
+	actions.results.shared.dependencies(initialState.results.shared.dependencies);
+	if (!Object.values(initialState.results.shared.dependencies).some(v => v != null)) {
+		function findAnnotation(keywords: string[]): string[] {
+			const ids = Object.keys(allAnnotationsMap).filter(id => allAnnotationsMap[id].hasForwardIndex);
+
+			// return best match first. If multiple annotations match the same keyword, prefer the shortest one i.e. best match (e.g. pos > pos_with_features)
+			const matches = ids.flatMap(id => {
+				const matchIndex = keywords.findIndex(kw => id.toLowerCase().includes(kw));
+				if (matchIndex === -1) return [];
+				return {id, matchIndex};
+			});
+			const sortedMatches = matches.sort((a, b) => a.matchIndex - b.matchIndex === 0 ? a.id.length - b.id.length : a.matchIndex - b.matchIndex);
+			return sortedMatches.map(m => m.id);
+		}
+		const lemmaCandidates = [getState().results.shared.dependencies.lemma || findAnnotation(['lemma', 'lem', 'lexeme', 'root', 'stem', 'canon'])].flat();
+		const uposCandidates = [getState().results.shared.dependencies.upos || findAnnotation(['upos', 'pos', 'part', 'morph', 'speech', 'lex', 'class', 'cat'])].flat();
+		const xposCandidates = [getState().results.shared.dependencies.xpos || findAnnotation(['xpos', 'pos', 'part', 'morph', 'speech', 'lex', 'class', 'cat'])].flat();
+		const featsCandidates = [getState().results.shared.dependencies.feats || findAnnotation(['feats', 'features', 'pos', 'part', 'morph', 'speech', 'lex', 'class', 'cat'])].flat();
+		let lemma = lemmaCandidates[0] || null;
+		let upos = uposCandidates.find(candidate => candidate != lemma) || null;
+		let xpos = xposCandidates.find(candidate => candidate != lemma && candidate != upos) || null;
+		let feats = featsCandidates.find(candidate => candidate != lemma && candidate != upos && candidate != xpos) || null;
+		actions.results.shared.dependencies({lemma, upos, xpos, feats});
+	}
+
+	// init custom annotation extension points, so vue reactivity will properly pick up on them
+	CorpusStore.get.allAnnotations().forEach(annot => privateActions.search.shared.initCustomAnnotationRegistrationPoint(annot.id));
+
 	Object.assign(initialState, cloneDeep(getState()));
+
+	// disable our terrible hack
+	alwaysCallbackAfterValidating = false;
 };
 
 // =======================
 // Some helpers
 // =======================
 
-function createConfigurator<T extends MapOf<string[]>>(proppaths: T) {
+function createConfigurator<T extends Record<string, string[]>>(proppaths: T) {
 	const r = function(config: [[undefined, ...Array<keyof T>],  [string, ...Array<boolean|undefined>]]) {
 		const props = config.shift() as string[];
 		const propvalues = {} as {[K in keyof T]: string[]};
@@ -785,6 +988,13 @@ function createConfigurator<T extends MapOf<string[]>>(proppaths: T) {
 	return r;
 }
 
+/**
+ * Terrible hack to validate settings that are set before the corpus is loaded.
+ * This is because the setters have validation, but they don't do anything if the value is invalid.
+ * This setting makes it so the setters clear the setting if the value is invalid (instead of doing nothing).
+ * We can then detect this and set a default afterwards.
+ */
+let alwaysCallbackAfterValidating = false;
 /** Validate all ids, triggering callbacks for failed ids, and triggering a final callback if there is any valid annotation. */
 function validateAnnotations(
 	ids: string[],
@@ -793,7 +1003,11 @@ function validateAnnotations(
 	invalid: (id: string) => string,
 	cb: (ids: string[]) => void
 ) {
-	// tslint:disable
+	if (!CorpusStore.getState().corpus) { // not loaded yet
+		cb(ids);
+		return;
+		// we will re-check this on init()?
+	}
 	const all = CorpusStore.get.allAnnotationsMap();
 	const results = ids.filter(id => {
 		if (!all[id]) { console.warn(missing(id)); return false; }
@@ -801,10 +1015,10 @@ function validateAnnotations(
 		return true;
 	});
 
-	if (!ids.length || results.length) {
+	// trigger if: list that was passed in is empty, or when any result remains after removing invalid ids.
+	if (!ids.length || results.length || alwaysCallbackAfterValidating) {
 		cb(results);
 	}
-	// tslint:enable
 }
 
 /** Validate all ids, triggering callbacks for failed ids, and triggering a final callback if there is any valid annotation. */
@@ -815,31 +1029,37 @@ function validateMetadata(
 	invalid: (id: string) => string,
 	cb: (ids: string[]) => void
 ) {
-	// tslint:disable
+	if (!CorpusStore.getState().corpus) {
+		cb(ids);
+		return;
+		// assume we will re-check this on init()?
+	}
+
 	const all = CorpusStore.get.allMetadataFieldsMap();
 	const results = ids.filter(id => {
 		if (!all[id]) { console.warn(missing(id)); return false; }
 		if (!validate(all[id])) { console.warn(invalid(id)); return false; }
 		return true;
 	});
-	if (!ids.length || results.length) {
+
+	// trigger if: list that was passed in is empty, or when any result remains after removing invalid ids.
+	if (!ids.length || results.length || alwaysCallbackAfterValidating) {
 		cb(results);
 	}
-	// tslint:enable
 }
 
 // =============
 
 function getCheckmarks(
-	config: MapOf<string[]>,
+	config: Record<string, string[]>,
 	groups: Array<{id: string, entries: string[], isRemainderGroup: boolean}>,
 	remainderGroupName: string
 ): Array<{
 	id: string;
-	entries: Array<{id: string, checkmarks: MapOf<boolean>}>
+	entries: Array<{id: string, checkmarks: Record<string, boolean>}>
 }> {
 	// Initialize outputs
-	const entryMap: MapOf<{id: string, checkmarks: MapOf<boolean>}> = {};
+	const entryMap: Record<string, {id: string, checkmarks: Record<string, boolean>}> = {};
 	groups.forEach(g => g.entries.forEach(id => entryMap[id] = {id, checkmarks: {}}));
 
 	// Fill outputs
@@ -858,12 +1078,6 @@ function getCheckmarks(
 		}).map(id => entryMap[id]),
 		id: g.isRemainderGroup ? remainderGroupName : g.id
 	}));
-}
-
-function getAsGroups(groupOrder: string[], entries: Array<{id: string, groupId: string, checkmarks: MapOf<boolean>}>) {
-	return Object.entries(multimapReduce(Object.values(entries), 'groupId'))
-	.map(([groupId, values]) => ({groupId, values}))
-	.sort((a, b) => groupOrder.indexOf(a.groupId) - groupOrder.indexOf(b.groupId));
 }
 
 function getCells(props: string[]) {
@@ -926,6 +1140,7 @@ function printCustomizations() {
 
 export {
 	ModuleRootState,
+	CustomView,
 
 	getState,
 	get,

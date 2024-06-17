@@ -1,23 +1,26 @@
 const path = require('path');
 const webpack = require('webpack');
-const ForkTsCheckerWebpackPlugin = require('fork-ts-checker-webpack-plugin');
 const {VueLoaderPlugin} = require('vue-loader');
+const ForkTsCheckerWebpackPlugin = require('fork-ts-checker-webpack-plugin');
 const CircularDependencyPlugin = require('circular-dependency-plugin');
+// const BundleAnalyzerPlugin = require('webpack-bundle-analyzer').BundleAnalyzerPlugin;
 
 module.exports = {
 	entry: {
 		// Output multiple files, one for each main page - important!: also include the polyfills in the output bundle
-		article: ['./src/utils/enable-polyfills.ts', './src/article.ts'],
-		corpora: ['./src/utils/enable-polyfills.ts', './src/corpora.ts'],
-		search: ['./src/utils/enable-polyfills.ts', './src/search.tsx'],
-		'remote-index': ['./src/utils/enable-polyfills.ts', './src/remote-index.ts']
+		article:        ['./src/utils/enable-polyfills.ts', './src/article.ts'],
+		corpora:        ['./src/utils/enable-polyfills.ts', './src/corpora.ts'],
+		search:         ['./src/utils/enable-polyfills.ts', './src/search.tsx'],
+		'remote-index': ['./src/utils/enable-polyfills.ts', './src/remote-index.ts'],
+		callback:       ['./src/utils/enable-polyfills.ts', './src/callback.ts'],
+		config:         ['./src/utils/enable-polyfills.ts', './src/config.ts']
 	},
 	output: {
 		filename: '[name].js',
 		// Path on disk for output file
 		path: path.resolve(__dirname, 'dist'),
 		// Path in webpack-dev-server for compiled files (has priority over disk files in case both exist)
-		publicPath: '/dist/',
+		publicPath: 'http://localhost:8081/dist/', // add port because application runs on 8080 but js runs on 8081, breaking hot reload (it would try to download js from 8080)
 	},
 	resolve: {
 		extensions: ['.js', '.ts'], // enable autocompleting .ts and .js extensions when using import '...'
@@ -25,10 +28,13 @@ module.exports = {
 			// Enable importing source files by their absolute path by prefixing with "@/"
 			// Note: this also requires typescript to be able to find the imports (though it doesn't use them other than for type checking), see tsconfig.json
 			"@": path.join(__dirname, "src"),
+			// Make import Vue from 'vue' import the version that includes the template compiler.
+			// Normally you don't need this, but we allow plugin components that may have to be compiled runtime.
+			// Hence we need this alias.
+			'vue$': 'vue/dist/vue.esm.js'
 		}
 	},
 	module: {
-		// import/exports
 		rules: [{
 			test: /\.css$/,
 			use: [ 'vue-style-loader', 'css-loader'],
@@ -47,7 +53,8 @@ module.exports = {
 		}, {
 			test: /\.tsx$/,
 			use: [{
-				loader: 'babel-loader',
+				// required for jsx
+				loader: 'babel-loader'
 			}, {
 				loader: 'ts-loader',
 				options: {
@@ -72,8 +79,7 @@ module.exports = {
 		}, {
 			test: /\.ts$/,
 			use: [{
-				loader: 'babel-loader',
-			}, {
+				// babel-loader omitted because we don't need transpilation during development.
 				loader: 'ts-loader',
 				options: {
 					/*
@@ -94,13 +100,16 @@ module.exports = {
 					appendTsSuffixTo: [/\.vue$/],
 				}
 			}]
+			// js files omitted because defaults are fine for dev builds.
+			// prod builds will use babel to transpile
 		}, {
-			test: /\.js$/,
-			exclude: [/node_modules/, '/src/vendor'],
-			loader: 'babel-loader',
+			test: /\.ttf$/,
+			type: 'asset/resource'
 		}]
 	},
 	plugins: [
+		// new BundleAnalyzerPlugin(),
+
 		// ProvidePlugin makes modules globally available under certain symbols, for both our own files as well as our imported dependencies.
 		// This is unfortunately required to allow dependencies to augment other dependencies (such as jquery-ui and bootstrap augmenting jquery)
 		// which requires the same instance of jquery to be visible to both the jquery-ui module as our own files
@@ -110,10 +119,15 @@ module.exports = {
 			'window.jQuery':    'jquery',
 			'jQuery':           'jquery',
 			'$':                'jquery',
-			'CodeMirror':       'codemirror',
 		}),
 
-		new ForkTsCheckerWebpackPlugin({}),
+		new ForkTsCheckerWebpackPlugin({
+			typescript: {
+				extensions: {
+					vue: true,
+				},
+			  },
+		}),
 		new VueLoaderPlugin(),
 		new CircularDependencyPlugin({
 			// `onStart` is called before the cycle detection starts
@@ -132,7 +146,7 @@ module.exports = {
 			// onEnd({ compilation }) {
 			//   console.log('end detecting webpack modules cycles');
 			// },
-		})
+		}),
 	],
 	devtool: 'eval-source-map',
 	// Sometimes we get false-positive errors when importing a typescript type definition from a file which itself imported it from a third file
@@ -152,9 +166,21 @@ module.exports = {
 	// We run a second typescript compiler in a separate thread that does do actual deep validation, so we will still get warnings for genuine typescript errors.
 	// (that process happens in the ForkTsCheckerWebpackPlugin we enabled above)
 	stats: {
-	  warningsFilter: /export .* was not found in/
+		warningsFilter: /export .* was not found in/
 	},
 	devServer: {
-		allowedHosts: "all"
-	}	
+		allowedHosts: "all",
+		headers: {
+			// allow fetching updates on port 8081 from site at port 8080
+			"Access-Control-Allow-Origin": "*",
+		},
+		// Proxying is required to load the webworkers in the monaco-editor
+		// as serving them from a different port does not work
+		// So proxy the tomcat instance through webpack-dev-server so everything can run off port 8081 in the browser.
+		proxy: [{
+			context: ['/corpus-frontend', '/blacklab-server'],
+			target: 'http://127.0.0.1:8080',
+			secure: false
+		}]
+	}
 };

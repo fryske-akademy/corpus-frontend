@@ -1,6 +1,6 @@
 <template>
 	<div class="querysummary" ref="root">
-		Results for: <span class="small text-muted content" :title="summary">{{summary.substr(0, 1000)}}</span>
+		{{ $t('results.querySummary.heading') }}<span class="small text-muted content" :title="summary">{{summary.substr(0, 1000)}}</span>
 	</div>
 </template>
 
@@ -10,25 +10,21 @@ import * as QueryStore from '@/store/search/query';
 
 export default Vue.extend({
 	computed: {
-		filters() { return Object.values(QueryStore.getState().filters  || {}); },
-		cqlPattern(): string|undefined { return QueryStore.get.patternString(); },
+		pattern: QueryStore.get.patternSummary,
+		filters: QueryStore.get.filterSummary,
 		summary(): string {
-
-			if (!this.cqlPattern && this.filters.length === 0) {
-				return 'all documents';
+			if (!this.pattern && !this.filters) {
+				return this.$t('results.querySummary.allDocuments') as string ;
 			}
-
-			const metadataString = QueryStore.get.filterSummary();
 
 			let ret = '';
-
-			if (this.cqlPattern) {
-				ret += '"' + this.cqlPattern + '"' + ' within ';
+			if (this.pattern) {
+				ret += this.pattern + ' ' + this.$t('results.querySummary.within') + ' ';
 			}
-			if (metadataString) {
-				ret += 'documents where ' + metadataString;
+			if (this.filters) {
+				ret += this.$t('results.querySummary.documentsWhere') + ' ' + this.filters;
 			} else {
-				ret += 'all documents';
+				ret += this.$t('results.querySummary.allDocuments');
 			}
 
 			return ret;

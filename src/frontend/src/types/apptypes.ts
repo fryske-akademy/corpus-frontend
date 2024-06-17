@@ -100,9 +100,35 @@ export type NormalizedMetadataGroup = {
 	isRemainderGroup: boolean;
 };
 
+/** A smaller version of the index object without actual description of the contents. */
+export type NormalizedIndexBase = {
+	/** Description as set by the creator */
+	description: string;
+	/** A user-friendly name, excluding the name of the owner (if any). */
+	displayName: string;
+	/** key of a BLFormat */
+	documentFormat?: string;
+	/** Id of this index. Contains the username if this is a user-owned index. (username:indexname) */
+	id: string;
+	/** Progress of indexing new documents, if currently indexing. Null otherwise. */
+	indexProgress: BLTypes.BLIndexProgress|null;
+	/** Owner of the corpus, if is a user owned corpus */
+	owner: string|null;
+	/** Whether the index is indexing new documents or is available for searching, etc. */
+	status: BLTypes.BLIndex['status'];
+	/** yyyy-mm-dd hh:mm:ss */
+	timeModified: string;
+	/** Number of tokens in this index (excluding those tokens added in any currently running indexing action). */
+	tokenCount: number;
+	/** Number of documents in this index excluding those tokens added in any currently running indexing action). */
+	documentCount: number;
+}
+
 /** Contains information about the internal structure of the index - which fields exist for tokens, which metadata fields exist for documents, etc */
-export type NormalizedIndex = {
+export type NormalizedIndex = NormalizedIndexBase&{
 	annotatedFields: { [id: string]: NormalizedAnnotatedField; };
+	/** Key info annotatedFields */
+	mainAnnotatedField: string;
 	/**
 	 * If no groups are defined by blacklab itself, all annotations of all annotatedFields are placed in generated groups.
 	 * Note that an annotation may be part of more than one group.
@@ -110,16 +136,11 @@ export type NormalizedIndex = {
 	 */
 	annotationGroups: NormalizedAnnotationGroup[];
 	contentViewable: boolean;
-	/** Description of the main index */
-	description: string;
-	displayName: string;
 	/** If -1, the blacklab version is too old to support this property, and it needs to be requested from the server. (we do this on app startup, see corpusStore). */
 	documentCount: number;
-	/** key of a BLFormat */
-	documentFormat?: string;
+
 	fieldInfo: BLTypes.BLDocFields;
-	/** Id of this index */
-	id: string;
+
 	/**
 	 * If no groups are defined by blacklab itself, all metadata fields are placed in a single group called 'Metadata'.
 	 * Note that a single field may be part of more than one group.
@@ -127,45 +148,20 @@ export type NormalizedIndex = {
 	 */
 	metadataFieldGroups: NormalizedMetadataGroup[];
 	metadataFields: { [key: string]: NormalizedMetadataField; };
-	/** Owner of the corpus, if is a user owned corpus */
-	owner: string|null;
-	/** Id of the corpus minus the owner's username prefix */
-	shortId: string;
+
 	textDirection: 'ltr'|'rtl';
-	/** yyyy-mm-dd hh:mm:ss */
-	timeModified: string;
-	tokenCount: number;
+
+	/**
+	 * BlackLab doesn't return this with the normal index metadata, but we pull them together for ease of use.
+	 * See store/search/corpus.ts::init and blacklabutils::NormalizeIndex
+	 * */
+	relations: BLTypes.BLRelationInfo;
 };
-
-// ---------
-// Old types
-// ---------
-
-// TODO merge the old and new NormalizedIndex types
 
 // Helper - get all props in A not in B
 type Subtract<A, B> = Pick<A, Exclude<keyof A, keyof B>>;
 
-interface INormalizedIndexOld {
-	// new props
-	/** ID in the form username:indexname */
-	id: string;
-	/** username extracted */
-	owner: string|null;
-	/** indexname extracted */
-	shortId: string;
-
-	/** Not available immediately - filled in after some time */
-	description: string|null;
-
-	// original props, with normalized values
-	documentFormat: string|null;
-	indexProgress: BLTypes.BLIndexProgress|null;
-	tokenCount: number|null;
-}
-export type NormalizedIndexOld = INormalizedIndexOld & Subtract<BLTypes.BLIndex, INormalizedIndexOld>;
-
-interface INormalizedFormatOld {
+interface INormalizedFormat {
 	// new props
 	id: string;
 	/** Username extracted */
@@ -181,12 +177,15 @@ interface INormalizedFormatOld {
 	/** set to shortId if originally empty */
 	displayName: string;
 }
-export type NormalizedFormatOld = INormalizedFormatOld & Subtract<BLTypes.BLFormat, INormalizedFormatOld>;
+export type NormalizedFormat = INormalizedFormat & Subtract<BLTypes.BLFormat, INormalizedFormat>;
 
 // ------------------
 // Types used on page
 // ------------------
 
+/**
+ * In the central Vuex store, this object represents the value of an "annotation" e.g. word/lemma/pos
+ */
 export type AnnotationValue = {
 	/** Unique id of the annotated field  */
 	// readonly annotatedFieldId: string;
@@ -246,6 +245,54 @@ export type FilterDefinition<MetadataType = any, ValueType = any> = {
 	metadata: any;
 };
 
+// ---------------
+// Hits displaying
+// ---------------
+
+export type TokenHighlight = {
+	/** css color in the form of rgb(x,y,z) */
+	color: string;
+	/** Because background color might be dark, in that case text should be white */
+	textcolor: string;
+	/** Invert of textcolor */
+	textcolorcontrast: string;
+	/** name of the capture group, or the relation's name */
+	key: string;
+};
+
+export type CaptureAndRelation = {
+	/** name of the capture group, or the relation's name as decided by BlackLab (usually the infix of the arrow e.g. obj when "-obj->", or dep1, dep2, etc. when using bare arrow operator "-->" in the query). */
+	key: string;
+	/** value of captured info, or value of relation. */
+	display: string;
+	/** true if this is a relation source */
+	isSource: boolean;
+	/** true if this is a relation target */
+	isTarget: boolean;
+
+	/** Color info for highlighting the word. */
+	highlight: TokenHighlight;
+}
+export type HitToken = {
+	/** Value of the main annotation. For ease of use. */
+	text: string;
+	/** Raw values of the extracted annotations. */
+	annotations: Record<string, string>
+	/** after the text */
+	punct: string;
+	captureAndRelation?: CaptureAndRelation[];
+}
+
+/**
+ * Interop between blacklab Hit objects and the UI.
+ * Contains info about highlighted words, and the words themselves.
+ */
+export type HitContext = {
+	before: HitToken[];
+	match: HitToken[];
+	after: HitToken[];
+}
+
 // -------------------
 // Configuration types
 // -------------------
@@ -289,23 +336,27 @@ export class ApiError extends Error {
 	public readonly message: string;
 	/** http code, -1 if miscellaneous network error */
 	public readonly statusText: string;
+	public readonly httpCode: number|undefined;
 
-	constructor(title: string, message: string, statusText: string) {
-		super();
+	constructor(title: string, message: string, statusText: string, httpCode: number|undefined) {
+		super(message);
 		this.title = title;
 		this.message = message;
 		this.statusText = statusText;
+		this.httpCode = httpCode;
 	}
 }
 
 // Import quirks, duplicate these
-// TODO solve and allow importing types from .vue files in non-.vue files
+
+/** Generic object to represent an option in a dropdown multiple-choice, checkbox list, etc. */
 export type Option = {
 	value: string;
 	label?: string;
 	title?: string|null;
 	disabled?: boolean;
 };
+/** Generic object to represent a group of Options in a dropdown multiple-choide, checkbox list, etc. */
 export type OptGroup = {
 	label?: string;
 	title?: string|null;

@@ -4,7 +4,7 @@
 			<div class="modal-content">
 				<div class="modal-header">
 					<button type="button" class="close" data-dismiss="modal" aria-label="Close"><span aria-hidden="true">&times;</span></button>
-					<h4 class="modal-title">History</h4>
+					<h4 class="modal-title">{{ $t('history.heading') }}</h4>
 				</div>
 				<div class="modal-body">
 					<table class="table table-hover history-table">
@@ -12,10 +12,10 @@
 							<tr>
 								<th width="30px;">#</th>
 								<th width="70px;"></th>
-								<th width="90px;">Results</th>
-								<th>Pattern</th>
-								<th>Filters</th>
-								<th>Grouping</th>
+								<th width="90px;">{{ $t('history.results') }}</th>
+								<th>{{ $t('history.pattern') }}</th>
+								<th>{{ $t('history.filters') }}</th>
+								<th>{{ $t('history.grouping') }}</th>
 								<th width="115px"></th>
 							</tr>
 						</thead>
@@ -30,37 +30,41 @@
 									hour: 'numeric',
 									minute: 'numeric'
 								})}}</small></td>
-								<td>{{entry.interface.viewedResults === 'hits' ? 'Hits' : 'Documents'}}</td>
+								<td>{{
+									entry.interface.viewedResults === 'hits' ? 'Hits' :
+									entry.interface.viewedResults === 'docs' ? 'Documents' :
+									entry.interface.viewedResults
+								}}</td>
 								<td class="history-table-contain-text" :title="entry.displayValues.pattern.substring(0,1000) || undefined">{{entry.displayValues.pattern}}</td>
 								<td class="history-table-contain-text" :title="entry.displayValues.filters.substring(0,1000) || undefined">{{entry.displayValues.filters}}</td>
-								<td class="history-table-contain-text" :title="entry[entry.interface.viewedResults].groupBy.concat(entry[entry.interface.viewedResults].groupByAdvanced).join(' ') || '-'">{{entry[entry.interface.viewedResults].groupBy.concat(entry[entry.interface.viewedResults].groupByAdvanced).join(' ') || '-'}}</td>
+								<td class="history-table-contain-text" :title="entry.view.groupBy.join(' ') || '-'">{{entry.view.groupBy.join(' ') || '-'}}</td>
 								<td>
 									<div class="btn-group">
-										<button type="button" class="btn btn-default" @click="load(entry)">Search</button>
+										<button type="button" class="btn btn-default" @click="load(entry)">{{ $t('history.search') }}</button>
 										<button type="button" class="btn btn-default dropdown-toggle" data-toggle="dropdown"><span class="caret"/></button>
 										<ul class="dropdown-menu dropdown-menu-right">
-											<li><a role="button" @click.prevent="openShareUrl(entry)">Copy as link</a></li>
-											<li><a role="button" @click.prevent="downloadAsFile(entry)">Download as file</a></li>
-											<li><a role="button" @click.prevent="remove(index)">Delete</a></li>
-											<li><a role="button" @click.prevent="clearHistoryVisible = true">Delete all</a></li>
+											<li><a role="button" @click.prevent="openShareUrl(entry)">{{ $t('history.copyAsLink') }}</a></li>
+											<li><a role="button" @click.prevent="downloadAsFile(entry)">{{ $t('history.downloadAsFile') }}</a></li>
+											<li><a role="button" @click.prevent="remove(index)">{{ $t('history.delete') }}</a></li>
+											<li><a role="button" @click.prevent="clearHistoryVisible = true">{{ $t('history.deleteAll') }}</a></li>
 										</ul>
 									</div>
 								</td>
 							</tr>
 						</tbody>
 					</table>
-					<button v-if="recentHistory.length < history.length" type="button" class="btn btn-default" @click="shownOlderEntries+=5">Load more</button>
+					<button v-if="recentHistory.length < history.length" type="button" class="btn btn-default" @click="shownOlderEntries+=5">{{ $t('history.loadMore') }}</button>
 				</div>
 				<div class="modal-footer">
 					<form v-if="importUrlVisible" @submit.prevent.stop="importFromUrl" :name="`${uid}_import`" class="history-table-import-url">
 						<div class="input-group" style="width: 100%;">
-							<input type="url" class="form-control" autocomplete="off" autofocus placeholder="Copy your url here" ref="importUrlInput"/>
-							<span class="input-group-btn"><button type="submit" class="btn btn-primary">Import url</button></span>
+							<input type="url" class="form-control" autocomplete="off" autofocus :placeholder="$t('history.copyUrlHere')" ref="importUrlInput"/>
+							<span class="input-group-btn"><button type="submit" class="btn btn-primary">{{ $t('history.importUrl') }}</button></span>
 						</div>
 						<div v-if="importUrlError" class="text-danger">{{importUrlError}}</div>
 					</form>
-					<button v-else class="btn btn-link btn-open-import" @click="importUrlVisible = !importUrlVisible"><span class="fa fa-lg fa-plus"></span> Import from a link</button>
-					<button type="button" name="closeSettings" class="btn btn-primary" data-dismiss="modal">Close</button>
+					<button v-else class="btn btn-link btn-open-import" @click="importUrlVisible = !importUrlVisible"><span class="fa fa-lg fa-plus"></span> {{ $t('history.importFromLink') }}</button>
+					<button type="button" name="closeSettings" class="btn btn-primary" data-dismiss="modal">{{ $t('history.close') }}</button>
 				</div>
 			</div>
 		</div>
@@ -72,13 +76,13 @@
 		</form>
 		<form v-if="clearHistoryVisible" class="history-popup" @click.self="clearHistoryVisible = false">
 			<div class="history-popup-content modal-content">
-				<div class="modal-header"><h4 class="modal-title">Clear search history</h4></div>
+				<div class="modal-header"><h4 class="modal-title">{{ $t('history.clearSearchHistory') }}</h4></div>
 				<div class="modal-body">
-					Are you sure you want to clear your search history?
+					{{ $t('history.clearSearchHistoryConfirmation') }}
 				</div>
 				<div class="modal-footer" style="justify-content: flex-end">
-					<button type="button" class="btn btn-primary" @click="clearHistory">Clear</button>
-					<button type="button" class="btn btn-default" @click="clearHistoryVisible = false">Cancel</button>
+					<button type="button" class="btn btn-primary" @click="clearHistory">{{ $t('history.clear') }}</button>
+					<button type="button" class="btn btn-default" @click="clearHistoryVisible = false">{{ $t('history.cancel') }}</button>
 				</div>
 			</div>
 		</form>
@@ -93,7 +97,6 @@ import $ from 'jquery';
 import {saveAs} from 'file-saver';
 
 import * as RootStore from '@/store/search/';
-import * as CorpusStore from '@/store/search/corpus';
 import * as HistoryStore from '@/store/search/history';
 import * as FilterStore from '@/store/search/form/filters';
 
@@ -101,10 +104,8 @@ import UrlStateParser from '@/store/search/util/url-state-parser';
 
 import UID from '@/mixins/uid';
 
-import * as BLTypes from '@/types/blacklabtypes';
-
 export default Vue.extend({
-	mixins: [UID],
+	mixins: [UID] as any,
 	data: () => ({
 		sessionStart: new Date().getTime(),
 		shownOlderEntries: 0,
@@ -133,6 +134,7 @@ export default Vue.extend({
 		},
 
 		load(entry: HistoryStore.HistoryEntry) {
+			// @ts-ignore
 			$(this.$refs.modal).modal('toggle');
 			RootStore.actions.replace(entry);
 		},

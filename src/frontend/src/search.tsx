@@ -12,7 +12,7 @@ import VuePlausible from 'vue-plausible/lib/esm/vue-plugin.js';
 
 import Filters from '@/components/filters';
 
-import {QueryBuilder, AttributeDef as QueryBuilderAttributeDef, QueryBuilderOptionsDef} from '@/modules/cql_querybuilder';
+import {QueryBuilder, AttributeDef as QueryBuilderAttributeDef} from '@/modules/cql_querybuilder';
 import * as RootStore from '@/store/search/';
 import * as CorpusStore from '@/store/search/corpus';
 import * as UIStore from '@/store/search/ui';
@@ -25,39 +25,19 @@ import connectStreamsToVuex from '@/store/search/streams';
 
 import SearchPageComponent from '@/pages/search/SearchPage.vue';
 import DebugComponent from '@/components/Debug.vue';
+import AudioPlayer from '@/components/AudioPlayer.vue';
 
 import debug, {debugLog} from '@/utils/debug';
 
-import '@/global.scss';
 import { getAnnotationSubset } from '@/utils';
 import { Option } from './types/apptypes';
 
-const connectJqueryToPage = () => {
-	$('input[data-persistent][id != ""], input[data-persistent][data-pid != ""]').each(function(i, elem) {
-		const $this = $(elem);
-		const key = 'input_' + ($this.attr('data-pid') || $this.attr('id'));
-		$this.on('change', function() {
-			const curVal: any = $this.is(':checkbox') ? $this.is(':checked') : $this.val();
-			window.localStorage.setItem(key, curVal);
-		});
+import * as loginSystem from '@/utils/loginsystem';
+import { init as initApi } from '@/api';
+import i18n from '@/utils/i18n';
 
-		if (window.localStorage) {
-			const storedVal = window.localStorage.getItem(key);
-			if (storedVal != null) {
-				$this.is(':checkbox') ? $this.attr('checked', (storedVal.toLowerCase() === 'true') as any) : $this.val(storedVal);
-			}
-		}
+import '@/global.scss';
 
-		// run handler once, init localstorage if required
-		// Only do next tick so handlers have a change to register
-		setTimeout(function() { $this.trigger('change'); });
-	});
-
-	// Enable wide view toggle
-	$('#wide-view').on('change', function() {
-		$('.container, .container-fluid').toggleClass('container', !$(this).is(':checked')).toggleClass('container-fluid', $(this).is(':checked'));
-	});
-};
 
 // Init the querybuilder with the supported attributes/properties
 function initQueryBuilder() {
@@ -84,7 +64,7 @@ function initQueryBuilder() {
 		}))
 	}));
 
-	const withinOptions = UIStore.getState().search.extended.within.elements;
+	const withinOptions = UIStore.getState().search.shared.within.elements;
 	// Initialize configuration
 	const instance = new QueryBuilder($('#querybuilder'), {
 		queryBuilder: {
@@ -140,8 +120,6 @@ Vue.config.errorHandler = (err, vm, info) => {
 	if (!err.message.includes('[vuex]' /* do not mutate vuex store state outside mutation handlers */)) { // already logged and annoying
 		ga('send', 'exception', { exDescription: err.message, exFatal: true });
 		console.error(err);
-	} else {
-		console.warn(err);
 	}
 };
 Vue.mixin({
@@ -164,9 +142,6 @@ Vue.mixin({
 	// tslint:enable
 });
 
-
-declare const PLAUSIBLE_DOMAIN: string|undefined;
-declare const PLAUSIBLE_APIHOST: string|undefined;
 if (PLAUSIBLE_DOMAIN && PLAUSIBLE_APIHOST) {
 	Vue.use(VuePlausible, {
 		domain: PLAUSIBLE_DOMAIN,
@@ -186,63 +161,44 @@ Vue.use(VTooltip, {
 	}
 });
 Vue.component('Debug', DebugComponent);
-import AudioPlayer from '@/components/AudioPlayer.vue';
-
-// register component plugins
 Vue.component('AudioPlayer', AudioPlayer);
 
 // Expose and declare some globals
 (window as any).Vue = Vue;
 
-type Hook = () => void|Promise<any>;
-const isHook = (hook: any): hook is Hook => typeof hook === 'function';
-declare const hooks: {
-	beforeStoreInit?: Hook;
-	beforeRender?: Hook;
-	beforeStateLoaded?: Hook;
-};
+/*
+Rethink page initialization
 
-async function runHook(hookName: keyof (typeof hooks)) {
-	const hook = hooks[hookName];
-	if (isHook(hook)) {
-		debugLog(`Running hook ${hookName}...`);
-		await hook();
-		debugLog(`Finished running hook ${hookName}`);
-	}
-}
+- first initialize login system, attempt to login
+- then initialize api objects with the login token
+- then fetch corpus info
+- initialize store?
+- fetch tagset info
+- initialize querybuilder
+- then restore state from url
+*/
 
 $(document).ready(async () => {
-	await runHook('beforeStoreInit');
-
-	debugLog('Initializing vuex store...');
-	RootStore.init();
-	debugLog('Finished initializing vuex store');
-
-	await runHook('beforeRender');
 
 	// We can render before the tagset loads, the form just won't be populated from the url yet.
 	(window as any).vueRoot = new Vue({
+		i18n,
 		store: RootStore.store,
 		render: h => h(SearchPageComponent),
-		mounted() {
-			requestAnimationFrame(() => {
-				connectJqueryToPage();
-
-				runHook('beforeStateLoaded')
-				.then(() => TagsetStore.actions.awaitInit())
-				.then(() => new UrlStateParser(FilterStore.getState().filters).get())
-				.then(urlState => {
-					debugLog('Loading state from url', urlState);
-					RootStore.actions.reset();
-					RootStore.actions.replace(urlState);
-					debugLog('Finished initializing state shape and loading initial state from url.');
-
-					// Don't do this before the url is parsed, as it controls the page url (among other things derived from the state).
-					connectStreamsToVuex();
-					// And this needs the tagset to have been loaded (if available)
-					initQueryBuilder();
-				});
-			});
-		}
+		mounted: async () => {
+			// we do this after render, so the user has something to look at while we're loading.
+			const user = await loginSystem.awaitInit(); // LOGIN SYSTEM
+			initApi('blacklab', BLS_URL, user);
+			initApi('cf', CONTEXT_URL, user);
+			const success = await RootStore.init();
+			if (!success) {
+				return;
+			}
+			const stateFromUrl = new UrlStateParser(FilterStore.getState().filters).get();
+			RootStore.actions.replace(stateFromUrl);
+			// Don't do this before the url is parsed, as it controls the page url (among other things derived from the state).
+			connectStreamsToVuex();
+			initQueryBuilder();
+		},
 	}).$mount(document.querySelector('#vue-root')!);
 });

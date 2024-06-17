@@ -1,4 +1,4 @@
-import { MapOf, unescapeLucene, escapeLucene, splitIntoTerms, mapReduce } from '@/utils';
+import { unescapeLucene, escapeLucene, splitIntoTerms, mapReduce, cast } from '@/utils';
 import { FilterValue, Option } from '@/types/apptypes';
 import { ASTNode, ASTRange } from 'lucene-query-parser';
 // @ts-ignore (framework limitation) typechecking does not work for imports from .vue files
@@ -43,7 +43,7 @@ type FilterValueFunctions<M, V> = {
 	 * If a custom filter wants to take "ownership" of a decoded filter value, it should delete the value from the map, to prevent
 	 * later (inbuilt) filters from decoding it.
 	 */
-	decodeInitialState(id: string, filterMetadata: M, filterValues: MapOf<FilterValue|undefined>, ast: ASTNode): V|null,
+	decodeInitialState(id: string, filterMetadata: M, filterValues: Record<string, FilterValue|undefined>, ast: ASTNode): V|null,
 	luceneQuery(id: string, filterMetadata: M, value: V|null): string|null;
 	luceneQuerySummary(id: string, filterMetadata: M, value: V|null): string|null;
 };
@@ -138,9 +138,6 @@ function getFieldValues(ast: ASTNode, field1: string, field2: string): {
 	return null;
 }
 
-/** Compile time checking: ensure the passed parameter is of the template type and return it (no-op). Can use while setting variables initial value for example. */
-function cast<T>(t: T): T { return t; }
-
 export const DateUtils = {
 	/**
 	 * Conver the date object into a lucene filter string (which is just the concatenated numbers with zero-padding).
@@ -200,7 +197,7 @@ export const DateUtils = {
 }
 
 
-export const valueFunctions: MapOf<FilterValueFunctions<any, any>> = {
+export const valueFunctions: Record<string, FilterValueFunctions<any, any>> = {
 	'filter-autocomplete': cast<FilterValueFunctions<never, string>>({
 		decodeInitialState(id, filterMetadata, filterValues) {
 			return (filterValues[id]?.values || []).map(unescapeLucene).map(val => val.match(/\s+/) ? `"${val}"` : val).join(' ') || null;
@@ -214,7 +211,7 @@ export const valueFunctions: MapOf<FilterValueFunctions<any, any>> = {
 			return split.map(t => (t.isQuoted || split.length > 1) ? `"${t.value}"` : t.value).join(', ') || null;
 		}
 	}),
-	'filter-checkbox': cast<FilterValueFunctions<Option[], MapOf<boolean>>>({
+	'filter-checkbox': cast<FilterValueFunctions<Option[], Record<string, boolean>>>({
 		decodeInitialState(id, filterMetadata, filterValues) {
 			const availableValues = filterValues[id]?.values
 				?.map(unescapeLucene)

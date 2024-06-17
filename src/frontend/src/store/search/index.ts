@@ -1,8 +1,5 @@
 import Vue from 'vue';
 import Vuex from 'vuex';
-import VueRx from 'vue-rx';
-// @ts-ignore
-import VuePursue from 'vue-pursue';
 
 import cloneDeep from 'clone-deep';
 import {getStoreBuilder} from 'vuex-typex';
@@ -20,34 +17,44 @@ import * as InterfaceModule from '@/store/search/form/interface';
 import * as PatternModule from '@/store/search/form/patterns';
 import * as ExploreModule from '@/store/search/form/explore';
 import * as GapModule from '@/store/search/form/gap';
+import * as GlossModule from '@/store/search/form/glossStore';
+import * as ConceptModule from '@/store/search/form/conceptStore';
 
 // Results
-import * as ResultsManager from '@/store/search/results';
-import * as DocResultsModule from '@/store/search/results/docs';
+import * as ViewModule from '@/store/search/results/views';
 import * as GlobalResultsModule from '@/store/search/results/global';
-import * as HitResultsModule from '@/store/search/results/hits';
 
 import * as BLTypes from '@/types/blacklabtypes';
 import { getPatternString } from '@/utils';
+import { ApiError } from '@/api';
 
 Vue.use(Vuex);
-Vue.use(VueRx);
 
 type RootState = {
+	// NOTE: any non-module properties need to be supplied to the initial state object passed to the b.vuexStore() call
+	// in order to be reactive. (vue needs an initial value to latch on to)
+	loadingState: 'loading'|'error'|'loaded'|'requiresLogin'|'unauthorized';
+	loadingMessage: string;
+
 	corpus: CorpusModule.ModuleRootState;
 	history: HistoryModule.ModuleRootState;
 	query: QueryModule.ModuleRootState;
 	tagset: TagsetModule.ModuleRootState;
 	ui: UIModule.ModuleRootState;
-}&FormManager.PartialRootState&ResultsManager.PartialRootState;
+	views: ViewModule.ModuleRootState;
+	global: GlobalResultsModule.ModuleRootState;
+}&FormManager.PartialRootState;
 
 const b = getStoreBuilder<RootState>();
 
 const getState = b.state();
 
 const get = {
-	viewedResultsSettings: b.read(state => state.interface.viewedResults != null ? state[state.interface.viewedResults] : null, 'getViewedResultsSettings'),
+	status: b.read(state => ({message: state.loadingMessage, status: state.loadingState}), 'status'),
 
+	viewedResultsSettings: b.read(state => state.views[state.interface.viewedResults!] ?? null, 'getViewedResultsSettings'),
+
+	/** Whether the filters section should be active (as it isn't active when in specific search modes (e.g. simple or explore)) */
 	filtersActive: b.read(state => {
 		return !(InterfaceModule.get.form() === 'search' && InterfaceModule.get.patternMode() === 'simple');
 	}, 'filtersActive'),
@@ -77,7 +84,7 @@ const get = {
 		return {
 			filter: QueryModule.get.filterString(),
 			first: state.global.pageSize * activeView.page,
-			group: activeView.groupBy.map(g => g + (activeView.caseSensitive ? ':s':':i')).concat(activeView.groupByAdvanced).join(',') || undefined,
+			group: activeView.groupBy.join(','),
 
 			number: state.global.pageSize,
 			patt: QueryModule.get.patternString(),
@@ -89,10 +96,15 @@ const get = {
 
 			sort: activeView.sort != null ? activeView.sort : undefined,
 			viewgroup: activeView.viewGroup != null ? activeView.viewGroup : undefined,
-			wordsaroundhit: state.global.wordsAroundHit != null ? state.global.wordsAroundHit : undefined,
+			context: state.global.context != null ? state.global.context : undefined,
+			adjusthits: 'yes'
 		};
 	}, 'blacklabParameters')
 };
+
+const privateActions = {
+	setLoadingState: b.commit((state, newState: Pick<RootState, 'loadingState'|'loadingMessage'>) => Object.assign(state, newState), 'setLoadingState'),
+}
 
 const actions = {
 	/** Read the form state, build the query, reset the results page/grouping, etc. */
@@ -102,23 +114,28 @@ const actions = {
 			actions.searchSplitBatches();
 			return;
 		}
-
-		// Reset the grouping/page/sorting/etc
-		ResultsManager.actions.resetResults();
+		// Reset the grouping/page/sorting/etc, for all views
+		ViewModule.actions.resetAllViews({resetGroupBy: false});
 
 		// Apply the desired grouping for this form, if needed.
 		if (state.interface.form === 'explore') {
 			switch (state.interface.exploreMode) {
 				case 'corpora': {
+					// open the 'docs' tab
 					InterfaceModule.actions.viewedResults('docs');
-					DocResultsModule.actions.groupDisplayMode(state.explore.corpora.groupDisplayMode);
-					DocResultsModule.actions.groupBy(state.explore.corpora.groupBy ? [state.explore.corpora.groupBy] : []);
+
+					// apply the groupings in the docs tab.
+					const m = ViewModule.getOrCreateModule('docs');
+					m.actions.groupDisplayMode(state.explore.corpora.groupDisplayMode);
+					m.actions.groupBy(state.explore.corpora.groupBy ? [state.explore.corpora.groupBy] : []);
 					break;
 				}
 				case 'frequency':
 				case 'ngram': {
+					// open the 'hits' tab
 					InterfaceModule.actions.viewedResults('hits');
-					HitResultsModule.actions.groupBy(state.interface.exploreMode === 'ngram' ? [ExploreModule.get.ngram.groupBy()] : [ExploreModule.get.frequency.groupBy()]);
+					const m = ViewModule.getOrCreateModule('hits');
+					m.actions.groupBy(state.interface.exploreMode === 'ngram' ? [ExploreModule.get.ngram.groupBy()] : [ExploreModule.get.frequency.groupBy()]);
 					break;
 				}
 				default: throw new Error(`Unhandled explore mode ${state.interface.exploreMode} while submitting form`);
@@ -143,7 +160,7 @@ const actions = {
 	}, 'searchFromSubmit'),
 
 	/**
-	 * Same deal, parse the form and generate the appropriate query, but do not change which, and how results are displayed
+	 * Same deal as searchFromSubmit, parse the form and generate the appropriate query, but do not change which, and how results are displayed
 	 * This is for when the page is first loaded, the url is decoded and might have contained information about how the results are displayed.
 	 * This data is now already in the store, we don't want to clear this.
 	 *
@@ -224,27 +241,21 @@ const actions = {
 			throw new Error('Attempting to submit split batches in wrong view');
 		}
 
-		const sharedBatchState: Pick<HistoryModule.HistoryEntry, Exclude<keyof HistoryModule.HistoryEntry, 'patterns'>> = {
-			docs: DocResultsModule.defaults,
+		const sharedBatchState: Omit<HistoryModule.HistoryEntry, 'patterns'> = {
+			view: ViewModule.getOrCreateModule(InterfaceModule.getState().viewedResults!).getState(),
 			explore: ExploreModule.defaults,
 			global: GlobalResultsModule.getState(),
-			hits: HitResultsModule.defaults,
 			interface: InterfaceModule.getState(),
 			filters: get.filtersActive() ? FilterModule.get.activeFiltersMap() : {},
 			gap: get.gapFillingActive() ? GapModule.getState() : GapModule.defaults,
+			concepts: ConceptModule.getState(),
+			glosses: GlossModule.getState(),
 		};
 
 		const annotations = PatternModule.get.activeAnnotations();
 		const submittedFormStates = annotations
 		.filter(a => a.type !== 'pos')
-		.flatMap(a => {
-			return a.value
-			.split('|')
-			.map(value => ({
-				...a,
-				value
-			}));
-		})
+		.flatMap(a => a.value.split('|').map(value => ({...a,value})))
 		.map<{
 			entry: HistoryModule.HistoryEntry,
 			pattern?: string,
@@ -254,8 +265,10 @@ const actions = {
 				...sharedBatchState,
 				patterns: {
 					advanced: null,
+					concept: null,
+					glosses: null,
 					expert: null,
-					simple: null,
+					simple: {...PatternModule.getState().simple, value: '', case: false},
 					extended: {
 						annotationValues: {
 							[a.id]: a
@@ -288,16 +301,22 @@ const actions = {
 
 	reset: b.commit(state => {
 		FormManager.actions.reset();
-		ResultsManager.actions.resetResults();
+		ViewModule.actions.resetAllViews({resetGroupBy: true});
 		QueryModule.actions.reset();
 	}, 'resetRoot'),
 
-	replace: b.commit((state, payload: HistoryModule.HistoryEntry) => {
+	/**
+	 * Is called when loading a search history entry, or when navigating in browser history.
+	 * Should fully reset and overwrite form state, and then execute a search.
+	*/
+	replace: b.commit((_, payload: HistoryModule.HistoryEntry) => {
 		FormManager.actions.replace(payload);
-		ResultsManager.actions.replace(payload);
-
+		GlobalResultsModule.actions.replace(payload.global);
+		// clear all views, otherwise inactive views would persist current settings.
+		ViewModule.actions.resetAllViews({resetGroupBy: true});
 		// The state we just restored has results open, so execute a search.
 		if (payload.interface.viewedResults != null) {
+			ViewModule.actions.replaceView({view: payload.interface.viewedResults, data: payload.view});
 			actions.searchAfterRestore();
 		}
 	}, 'replaceRoot'),
@@ -307,26 +326,45 @@ const actions = {
 // NOTE: process.env is empty at runtime, but webpack inlines all values at compile time, so this check works.
 declare const process: any;
 const store = b.vuexStore({
-	state: {} as RootState, // shut up typescript, the state we pass here is merged with the modules initial states internally.
+	state: {loadingState: 'loading', loadingMessage: 'Please wait while we get the corpus information...'} as RootState, // shut up typescript, the state we pass here is merged with the modules initial states internally.
 	strict: process.env.NODE_ENV === 'development',
-	plugins: process.env.NODE_ENV === 'development' ? [VuePursue] : undefined
 });
 
-const init = () => {
+const init = async () => {
 	// Load the corpus data, so we can derive values, fallbacks and defaults in the following modules
 	// This must happen right at the beginning of the app startup
-	CorpusModule.init();
-	// This is user-customizable data, it can be used to override various defaults from other modules,
-	// It needs to determine fallbacks and defaults for settings that haven't been configured,
-	// So initialize it before the other modules.
-	UIModule.init();
+	try {
+		await CorpusModule.init();
 
-	FormManager.init();
-	ResultsManager.init();
+		// This is user-customizable data, it can be used to override various defaults from other modules,
+		// It needs to determine fallbacks and defaults for settings that haven't been configured,
+		// So initialize it before the other modules.
+		await UIModule.init();
 
-	TagsetModule.init();
-	HistoryModule.init();
-	QueryModule.init();
+		await FormManager.init();
+		await ViewModule.init();
+		await GlobalResultsModule.init();
+
+		await TagsetModule.init();
+		await HistoryModule.init();
+		await QueryModule.init();
+		privateActions.setLoadingState({loadingState: 'loaded', loadingMessage: ''});
+
+		return true;
+	} catch (e: any) {
+		if (e instanceof ApiError) {
+			if (e.httpCode === 401) {
+				privateActions.setLoadingState({loadingState: 'requiresLogin', loadingMessage: e.message});
+			} else if (e.httpCode === 403) {
+				privateActions.setLoadingState({loadingState: 'unauthorized', loadingMessage: e.message});
+			} else {
+				privateActions.setLoadingState({loadingState: 'error', loadingMessage: e.message});
+			}
+		} else {
+			privateActions.setLoadingState({loadingState: 'error', loadingMessage: e.message ?? e.toString()});
+		}
+		return false;
+	}
 };
 
 // Debugging helpers.
@@ -344,7 +382,8 @@ const init = () => {
 	query: QueryModule,
 	tagset: TagsetModule,
 	ui: UIModule,
-
+	concepts: ConceptModule, // Jesse
+	glosses: GlossModule,
 	explore: ExploreModule,
 	form: FormManager,
 	filters: FilterModule,
@@ -352,9 +391,15 @@ const init = () => {
 	patterns: PatternModule,
 	gap: GapModule,
 
-	results: ResultsManager,
-	docs: DocResultsModule,
-	hits: HitResultsModule,
+	// backwards-compatibility.
+	// docs and hits used to be under results.docs and results.hits. Now they are under views.docs and views.hits
+	// While the main module used to be under results. Now it's under views, and the submodules (including hits and docs) are no longer visible directly.
+	results: {
+		...ViewModule,
+		hits: ViewModule.getOrCreateModule('hits'),
+		docs: ViewModule.getOrCreateModule('docs'),
+	},
+	views: ViewModule,
 	global: GlobalResultsModule,
 };
 

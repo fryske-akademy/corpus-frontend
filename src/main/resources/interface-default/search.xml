@@ -3,8 +3,8 @@
     <InterfaceProperties>
         <!--
         Limited variable interpolation is supported.
-        ${request:contextPath}  - the application root path, usually /corpus-frontend
-        ${request:corpusPath}   - the corpus root path, usually /corpus-frontend/${corpus-id}, equal to ${request:contextPath} if not viewing a corpus
+        ${request:contextPath}  - the application root path on the client, usually /corpus-frontend . Is equal to the cfUrlExternal setting. Does not contain a trailing slash.
+        ${request:corpusPath}   - the corpus root path on the client, usually /corpus-frontend/${corpus-id}, equal to ${request:contextPath} if not viewing a corpus. Does not contain a trailing slash.
         ${request:corpusId}     - the corpus id (including username portion for user corpora), so 'lassy' or 'username:corpus-name', empty if not viewing a corpus.
         Paths do not contain a trailing slash
         -->
@@ -27,14 +27,23 @@
         if that is not configured either, the internal corpus name is shown. -->
         <!--<DisplayName>BlackLab AutoSearch Corpus Search</DisplayName>-->
 
-        <!-- You can include custom js and css (usually from your corpus interface directory under /${contextPath}/corpusname/static/**), but external sites are supported. -->
-        <!--<CustomJs>${request:corpusPath}/static/your.js</CustomJs>-->
-        <!--<CustomCss>${request:corpusPath}/static/your.css</CustomCss>-->
+
         <!-- Should be a directory; see webapp/img/ for a full listing of files -->
         <FaviconDir>${request:contextPath}/img</FaviconDir>
 
+        <!-- 
+            You can include custom js and css (usually from your corpus interface directory under /${contextPath}/corpusname/static/**), but external sites are supported.
+            Attributes on the <CustomJs> (such as 'type="module"') tag are copied to the <script> tag on the page.
+            The 'page' attribute is special, it's not copied, but controls lets you only run the script on the specified page (options: search, article, about, help, error, config, corpora, remote-index).
+            Simply remove the 'page' attribute to include the script on every page.
+        -->
+        <!-- 
+            <CustomJs page="search" type="module">${request:corpusPath}/static/some.other.js</CustomJs>
+            <CustomCss page="article">${request:corpusPath}/static/your.css</CustomCss> 
+        -->
+
         <!--
-            You can define which properties/annotations to show as colummns in the results table.
+            You can define which properties/annotations to show as columns in the results table.
             By default (up to) the first 3 properties are shown, but 'lemma' and 'pos' have precedence and are always shown if they exist in the corpus.
         -->
         <!-- <PropColumns>lemma,pos,tense, person,number</PropColumns> -->
@@ -66,16 +75,18 @@
         -->
 
         <!-- see https://github.com/moritzsternemann/vue-plausible -->
-        <!-- <Plausible>
+        <!-- 
+        <Plausible>
             <domain>The domain registered with plausible</domain>
             <apiHost>The instance of plausible to use (for when self-hosting), normally https://plausible.io</apiHost>
-        </Plausible> -->
+        </Plausible> 
+        -->
 
     </InterfaceProperties>
     <XsltParameters>
     <!--
         The following values are provided automatically:
-        <XsltParameter name="contextRoot" value="/corpus-frontend"/>
+        <XsltParameter name="contextRoot" value="${request:contextPath}"/>
      -->
     </XsltParameters>
 </SearchInterface>

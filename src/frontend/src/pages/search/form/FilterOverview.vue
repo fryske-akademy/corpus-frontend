@@ -7,13 +7,13 @@
 
 		<div class="sub-corpus-size">
 			<template v-if="error">
-				Error: {{error.message}}
+				{{$t('filterOverview.error')}}: {{error.message}}
 			</template>
 			<template v-else-if="subCorpusStats">
-				Selected subcorpus:<br>
+				{{$t('filterOverview.subCorpus')}}:<br>
 				<span style="display: inline-block; vertical-align:top;">
-					Total documents:<br>
-					Total tokens:
+					{{$t('filterOverview.totalDocuments')}}:<br>
+					{{$t('filterOverview.totalTokens')}}:
 				</span>
 				<span style="display: inline-block; vertical-align:top; text-align: right; font-family: monospace;">
 					 {{subCorpusStats.summary.numberOfDocs.toLocaleString()}}<br>
@@ -25,8 +25,8 @@
 				</span>
 			</template>
 			<template v-else>
-				<span class="fa fa-spinner fa-spin searchIndicator totals-spinner"></span>
-				Calculating size of selected subcorpus...
+				<Spinner xs inline/>
+				{{$t('filterOverview.calculating')}}
 			</template>
 		</div>
 	</div>
@@ -46,10 +46,12 @@ import * as BLTypes from '@/types/blacklabtypes';
 import {ApiError} from '@/api';
 
 import frac2Percent from '@/mixins/fractionalToPercent';
-import { MapOf } from '@/utils';
 import { valueFunctions } from '@/components/filters/filterValueFunctions';
 
+import Spinner from '@/components/Spinner.vue';
+
 export default Vue.extend({
+	components: {Spinner},
 	filters: {
 		frac2Percent
 	},
@@ -60,8 +62,8 @@ export default Vue.extend({
 	}),
 	computed: {
 		activeFilters: FilterStore.get.activeFilters,
-		summaryMap(): MapOf<string> {
-			const r: MapOf<string> = {};
+		summaryMap(): Record<string, string> {
+			const r: Record<string, string> = {};
 			this.activeFilters.forEach(f => {
 				const summary = valueFunctions[f.componentName].luceneQuerySummary(f.id, f.metadata, f.value);
 				if (summary) { r[f.id] = summary; }
@@ -69,8 +71,8 @@ export default Vue.extend({
 			return r;
 		},
 
-		totalCorpusTokens(): number { return CorpusStore.getState().tokenCount; },
-		totalCorpusDocs(): number { return CorpusStore.getState().documentCount; }
+		totalCorpusTokens(): number { return CorpusStore.getState().corpus!.tokenCount; },
+		totalCorpusDocs(): number { return CorpusStore.getState().corpus!.documentCount; }
 	},
 	created() {
 		this.subscriptions.push(selectedSubCorpus$.subscribe(v => {

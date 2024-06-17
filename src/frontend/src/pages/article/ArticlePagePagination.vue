@@ -24,26 +24,10 @@
 import Vue from 'vue';
 import URI from 'urijs';
 
-import * as RootStore from '@/store/article';
-import { BLIndexMetadata, isIndexMetadataV1 } from '@/types/blacklabtypes';
-import { MapOf, words } from '@/utils';
 import { blacklab } from '@/api';
 import { BLHitResults } from '@/types/blacklabtypes';
 
 import Pagination from '@/components/Pagination.vue';
-
-declare const SINGLEPAGE: { INDEX: BLIndexMetadata; };
-
-// see article.vm
-declare const INDEX_ID: string;
-declare const DOCUMENT_ID: string;
-declare const DOCUMENT_LENGTH: number;
-declare const PAGINATION_ENABLED: boolean;
-declare const PAGE_SIZE: number; // always set, even when pagination disabled
-declare const PAGE_START: number; // set to 0 when pagination disabled
-declare const PAGE_END: number; // set to document_length when pagination disabled
-
-declare const MAIN_ANNOTATION: string;
 
 // NOTE: wordend in blacklab parameters is exclusive (wordstart=0 && wordend=100 returns words at index 0-99)
 
@@ -190,6 +174,7 @@ export default Vue.extend({
 
 
 		// Load all hits in the document (also those outside this page)
+		// @ts-ignore
 		const { query }: { query: string|undefined } = new URI().search(true);
 
 		if (!query) { // no hits when no query, abort
@@ -204,10 +189,10 @@ export default Vue.extend({
 			patt: query,
 			first: 0,
 			number: Math.pow(2, 31)-1,
-			wordsaroundhit: 0,
+			context: 0,
 			includetokencount: false,
 			listvalues: "__do_not_send_anything__", // we don't need this info
-		} as any).request
+		}).request
 		.then((r: BLHitResults) => r.hits.map(h => [h.start, h.end] as [number, number]))
 		.then(hits => {
 			// if specific hit passed from the previous page, find it in this page

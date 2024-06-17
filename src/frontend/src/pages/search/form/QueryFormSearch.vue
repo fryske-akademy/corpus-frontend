@@ -1,11 +1,13 @@
 <template>
 	<div>
-		<h3>Search for &hellip;</h3>
+		<h3>{{$t('search.heading')}}</h3>
 		<ul class="nav nav-tabs" id="searchTabs">
-			<li :class="{'active': activePattern==='simple'}" @click.prevent="activePattern='simple'"><a href="#simple" class="querytype">Simple</a></li>
-			<li :class="{'active': activePattern==='extended'}" @click.prevent="activePattern='extended'"><a href="#extended" class="querytype">Extended</a></li>
-			<li :class="{'active': activePattern==='advanced'}" @click.prevent="activePattern='advanced'" v-if="advancedEnabled"><a href="#advanced" class="querytype">Advanced</a></li>
-			<li :class="{'active': activePattern==='expert'}" @click.prevent="activePattern='expert'"><a href="#expert" class="querytype">Expert</a></li>
+			<li :class="{'active': activePattern==='simple'}" @click.prevent="activePattern='simple'"><a href="#simple" class="querytype">{{$t('search.simple.heading')}}</a></li>
+			<li :class="{'active': activePattern==='extended'}" @click.prevent="activePattern='extended'"><a href="#extended" class="querytype">{{$t('search.extended.heading')}}</a></li>
+			<li v-if="advancedEnabled" :class="{'active': activePattern==='advanced'}" @click.prevent="activePattern='advanced'" ><a href="#advanced" class="querytype">{{$t('search.advanced.heading')}}</a></li>
+			<li v-if="conceptEnabled" :class="{'active': activePattern==='concept'}" @click.prevent="activePattern='concept'"><a href="#concept" class="querytype">{{$t('search.concept.heading')}}</a></li>
+			<li v-if="glossEnabled" :class="{'active': activePattern==='glosses'}" @click.prevent="activePattern='glosses'"><a href="#glosses" class="querytype">{{$t('search.glosses.heading')}}</a></li>
+			<li :class="{'active': activePattern==='expert'}" @click.prevent="activePattern='expert'"><a href="#expert" class="querytype">{{$t('search.expert.heading')}}</a></li>
 		</ul>
 		<div class="tab-content">
 			<div :class="['tab-pane form-horizontal', {'active': activePattern==='simple'}]" id="simple">
@@ -17,44 +19,18 @@
 					>{{firstMainAnnotation.displayName}}
 					</label>
 
-					<Lexicon v-if="firstMainAnnotation.uiType === 'lexicon'"
-						autofocus
-
-						:annotationId="firstMainAnnotation.id"
-						:definition="firstMainAnnotation"
-						v-model="simple"
-
-						ref="reset"
+					<div v-if="customAnnotations[firstMainAnnotation.id]"
+						:data-custom-annotation-root="firstMainAnnotation.id"
+						data-is-simple="true"
+						ref="_simple"
 					/>
-					<SelectPicker v-else-if="firstMainAnnotation.uiType === 'select'"
-						data-width="100%"
-						data-class="btn btn-lg btn-default"
-						autofocus
 
-						:searchable="firstMainAnnotation.values.length > 12"
-						:placeholder="firstMainAnnotation.displayName"
-						:data-id="firstMainAnnotation.id + '_' + uid"
-						:data-name="firstMainAnnotation.id + '_' + uid"
-						:data-dir="textDirection"
-
-						:options="firstMainAnnotation.values"
-
-						v-model="simple"
-					/>
-					<Autocomplete v-else
-						type="text"
-						class="form-control"
-						autofocus
-
-						useQuoteAsWordBoundary
-
-						:id="firstMainAnnotation.id + '_' + uid"
-						:placeholder="firstMainAnnotation.displayName"
-						:dir="textDirection"
-
-						:autocomplete="firstMainAnnotation.uiType === 'combobox'"
-						:url="firstMainAnnotationACUrl"
-						v-model="simple"
+					<Annotation v-else
+						:key="'simple/' + firstMainAnnotation.annotatedFieldId + '/' + firstMainAnnotation.id"
+						:htmlId="'simple/' + firstMainAnnotation.annotatedFieldId + '/' + firstMainAnnotation.id"
+						:annotation="firstMainAnnotation"
+						bare
+						simple
 					/>
 				</div>
 			</div>
@@ -71,26 +47,45 @@
 							:key="index"
 							:id="getTabId(tab.label)"
 						>
-							<Annotation v-for="annotation in tab.entries"
-								:key="getTabId(tab.label) + '/' + annotation.annotatedFieldId + '/' + annotation.id"
-								:htmlId="getTabId(tab.label) + '/' + annotation.annotatedFieldId + '/' + annotation.id"
-								:annotation="annotation"
-							/>
+							<template v-for="annotation in tab.entries">
+								<div v-if="customAnnotations[annotation.id]"
+									:key="getTabId(tab.label) + '/' + annotation.annotatedFieldId + '/' + annotation.id"
+									:data-custom-annotation-root="annotation.id"
+									:ref="getTabId(tab.label) + '/' + annotation.annotatedFieldId + '/' + annotation.id"
+								/>
+
+								<Annotation v-else
+									:key="getTabId(tab.label) + '/' + annotation.annotatedFieldId + '/' + annotation.id"
+									:htmlId="getTabId(tab.label) + '/' + annotation.annotatedFieldId + '/' + annotation.id"
+									:annotation="annotation"
+								/>
+							</template>
+
 						</div>
 					</div>
 				</template>
 				<template v-else>
-					<Annotation v-for="annotation in allAnnotations"
-						:key="annotation.annotatedFieldId + '/' + annotation.id"
-						:htmlId="annotation.annotatedFieldId + '/' + annotation.id"
-						:annotation="annotation"
-					/>
+					<template v-for="annotation in allAnnotations">
+						<div v-if="customAnnotations[annotation.id]"
+							:key="annotation.annotatedFieldId + '/' + annotation.id + '/custom'"
+							:data-custom-annotation-root="annotation.id"
+							:ref="annotation.annotatedFieldId + '/' + annotation.id"
+						></div>
+
+						<Annotation v-else
+							:key="annotation.annotatedFieldId + '/' + annotation.id + '/builtin'"
+							:htmlId="annotation.annotatedFieldId + '/' + annotation.id"
+							:annotation="annotation"
+						/>
+					</template>
+
+
 				</template>
 
 				<!-- show this even if it's disabled when "within" contains a value, or you can never remove the value -->
 				<!-- this will probably never happen, but it could, if someone imports a query with a "within" clause active from somewhere -->
 				<div v-if="withinOptions.length || within" class="form-group">
-					<label class="col-xs-12 col-md-3">Within:</label>
+					<label class="col-xs-12 col-md-3">{{$t('search.extended.within')}}</label>
 
 					<div class="btn-group col-xs-12 col-md-9">
 						<button v-for="option in withinOptions"
@@ -106,32 +101,44 @@
 				<div v-if="splitBatchEnabled" class="form-group">
 					<div class="col-xs-12 col-md-9 col-md-push-3 checkbox">
 						<label for="extended_split_batch">
-							<input type="checkbox" name="extended_split_batch" id="extended_split_batch" v-model="splitBatch"/> Split batch queries
+							<input type="checkbox" name="extended_split_batch" id="extended_split_batch" v-model="splitBatch"/> {{$t('search.extended.splitBatch')}}
 						</label>
 					</div>
 				</div>
 			</div>
-			<div :class="['tab-pane', {'active': activePattern==='advanced'}]" id="advanced">
+			<div v-if="advancedEnabled" :class="['tab-pane', {'active': activePattern==='advanced'}]" id="advanced">
 				<div id="querybuilder" ref="querybuilder"></div>
-				<button type="button" class="btn btn-default btn-sm" @click="copyAdvancedQuery">Copy to CQL editor</button>
+				<button type="button" class="btn btn-default btn-sm" @click="copyAdvancedQuery">{{$t('search.advanced.copyAdvancedQuery')}}</button>
+			</div>
+			<div v-if="conceptEnabled" :class="['tab-pane', {'active': activePattern==='concept'}]" id="concept">
+
+				<!-- Jesse -->
+				<ConceptSearch/>
+				<button type="button" class="btn btn-default btn-sm" @click="copyConceptQuery">{{$t('search.concept.copyConceptQuery')}}</button>
+			</div>
+			<div v-if="glossEnabled" :class="['tab-pane', {'active': activePattern==='glosses'}]" id="glosses">
+				<!-- Jesse -->
+				<GlossSearch/>
+				<div style="margin-top:2em"/>
+				<button type="button" class="btn btn-default btn-sm" @click="copyGlossQuery">{{$t('search.glosses.copyGlossQuery')}}</button>
 			</div>
 			<div :class="['tab-pane', {'active': activePattern==='expert'}]" id="expert">
-				<h3>Corpus Query Language:</h3>
+				<h3>{{$t('search.expert.corpusQueryLanguage')}}:</h3>
 				<textarea id="querybox" class="form-control" name="querybox" rows="7" v-model.lazy="expert"></textarea>
-				<button v-if="advancedEnabled" type="button" class="btn btn-sm btn-default" name="parseQuery" id="parseQuery" title="Edit your query in the querybuilder" @click="parseQuery">Copy to query builder</button>
+				<button v-if="advancedEnabled" type="button" class="btn btn-sm btn-default" name="parseQuery" id="parseQuery" :title="$t('search.expert.parseQueryTitle')" @click="parseQuery">{{$t('search.expert.parseQuery')}}</button>
 				<label class="btn btn-sm btn-default file-input-button" for="importQuery">
-					Import query
-					<input type="file" name="importQuery" id="importQuery" accept=".txt,text/plain" @change="importQuery" title="Import a previously downloaded query">
+					{{$t('search.expert.importQuery')}}
+					<input type="file" name="importQuery" id="importQuery" accept=".txt,text/plain" @change="importQuery" :title="$t('search.expert.importQueryTitle')">
 				</label>
 				<div class="btn-group">
 					<label class="btn btn-sm btn-default file-input-button" for="gapFilling">
-						Gap-filling
-						<input type="file" name="gapFilling" id="gapFilling" accept=".tsv,.csv,text/plain" @change="importGapFile" title="Upload a tab-separated list of values to substitute for gap values ('@@' in your query).">
+						{{$t('search.expert.gapFilling')}}
+						<input type="file" name="gapFilling" id="gapFilling" accept=".tsv,.csv,text/plain" @change="importGapFile" :title="$t('search.expert.gapFillingTitle')">
 					</label>
 					<button v-if="gapValue != null"
 						type="button"
 						class="btn btn-default btn-sm"
-						title="Clear gap values"
+						:title="$t('search.expert.clearGapValues')"
 						@click="gapValue = null"
 					><span class="fa fa-times"></span></button>
 				</div>
@@ -151,29 +158,32 @@ import * as CorpusStore from '@/store/search/corpus';
 import * as UIStore from '@/store/search/ui';
 import * as InterfaceStore from '@/store/search/form/interface';
 import * as PatternStore from '@/store/search/form/patterns';
+import * as GlossStore from '@/store/search/form/glossStore';
+import * as ConceptStore from '@/store/search/form/conceptStore';
 import * as GapStore from '@/store/search/form/gap';
 import * as HistoryStore from '@/store/search/history';
 
 import Annotation from '@/pages/search/form/Annotation.vue';
-import Lexicon from '@/pages/search/form/Lexicon.vue';
-import SelectPicker, { Option } from '@/components/SelectPicker.vue';
-// @ts-ignore
-import Autocomplete from '@/components/Autocomplete.vue';
+import ConceptSearch from '@/pages/search/form/concept/ConceptSearch.vue';
+import GlossSearch from '@/pages/search/form/concept/GlossSearch.vue';
 import uid from '@/mixins/uid';
 
 import { QueryBuilder } from '@/modules/cql_querybuilder';
 
-import { paths } from '@/api';
+import { blacklabPaths } from '@/api';
 import * as AppTypes from '@/types/apptypes';
 import { getAnnotationSubset } from '@/utils';
+import { Option } from '@/components/SelectPicker.vue';
+
+function isVue(v: any): v is Vue { return v instanceof Vue; }
+function isJQuery(v: any): v is JQuery { return typeof v !== 'boolean' && v && v.jquery; }
 
 export default Vue.extend({
-	mixins: [uid],
+	mixins: [uid] as any,
 	components: {
 		Annotation,
-		Autocomplete,
-		SelectPicker,
-		Lexicon
+		ConceptSearch,
+		GlossSearch
 	},
 	data: () => ({
 		parseQueryError: null as string|null,
@@ -192,7 +202,7 @@ export default Vue.extend({
 		tabs(): Array<{label?: string, entries: AppTypes.NormalizedAnnotation[]}> {
 			return getAnnotationSubset(
 				UIStore.getState().search.extended.searchAnnotationIds,
-				CorpusStore.getState().annotationGroups,
+				CorpusStore.get.annotationGroups(),
 				CorpusStore.get.allAnnotationsMap(),
 				'Search',
 				CorpusStore.get.textDirection()
@@ -202,10 +212,10 @@ export default Vue.extend({
 			return this.tabs.flatMap(tab => tab.entries);
 		},
 		firstMainAnnotation: CorpusStore.get.firstMainAnnotation,
-		firstMainAnnotationACUrl(): string { return paths.autocompleteAnnotation(CorpusStore.getState().id, this.firstMainAnnotation.annotatedFieldId, this.firstMainAnnotation.id); },
+		firstMainAnnotationACUrl(): string { return blacklabPaths.autocompleteAnnotation(INDEX_ID, this.firstMainAnnotation.annotatedFieldId, this.firstMainAnnotation.id); },
 		textDirection: CorpusStore.get.textDirection,
 		withinOptions(): Option[] {
-			const {enabled, elements} = UIStore.getState().search.extended.within;
+			const {enabled, elements} = UIStore.getState().search.shared.within;
 			return enabled ? elements : [];
 		},
 		within: {
@@ -218,10 +228,12 @@ export default Vue.extend({
 			set: PatternStore.actions.extended.splitBatch
 		},
 		simple: {
-			get(): string|null { return PatternStore.getState().simple; },
+			get(): AppTypes.AnnotationValue { return PatternStore.getState().simple; },
 			set: PatternStore.actions.simple,
 		},
 		advancedEnabled(): boolean { return UIStore.getState().search.advanced.enabled; },
+		glossEnabled(): boolean { return GlossStore.get.settings() != null; },
+		conceptEnabled(): boolean { return ConceptStore.get.settings() != null; },
 		advanced: {
 			get(): string|null { return PatternStore.getState().advanced; },
 			set: PatternStore.actions.advanced,
@@ -230,18 +242,30 @@ export default Vue.extend({
 			get(): string|null { return PatternStore.getState().expert; },
 			set: PatternStore.actions.expert,
 		},
+		concept: {
+			get(): string|null { return PatternStore.getState().concept; },
+			set: PatternStore.actions.concept,
+		},
+		glosses: {
+			get(): string|null { return PatternStore.getState().glosses; },
+			set: PatternStore.actions.glosses,
+		},
 		gapValue: {
 			get: GapStore.get.gapValue,
 			set: GapStore.actions.gapValue
+		},
+
+		customAnnotations() {
+			return UIStore.getState().search.shared.customAnnotations;
 		}
 	},
 	methods: {
-		getTabId(name: string) {
-			return name.replace(/[^\w]/g, '_') + '_annotations';
+		getTabId(name?: string) {
+			return name?.replace(/[^\w]/g, '_') + '_annotations';
 		},
 		parseQuery() {
 			// TODO dedicated component - port builder?
-			const builder: QueryBuilder = $(this.$refs.querybuilder).data('builder');
+			const builder: QueryBuilder = $(this.$refs.querybuilder as HTMLElement).data('builder');
 			if (builder && builder.parse(this.expert)) {
 				InterfaceStore.actions.patternMode('advanced');
 				this.parseQueryError = null;
@@ -290,6 +314,61 @@ export default Vue.extend({
 		copyAdvancedQuery() {
 			PatternStore.actions.expert(PatternStore.getState().advanced);
 			InterfaceStore.actions.patternMode('expert');
+		},
+		copyConceptQuery() {
+			//PatternStore.actions.expert(PatternStore.getState().advanced);
+			this.expert = this.concept
+			InterfaceStore.actions.patternMode('expert');
+		},
+		copyGlossQuery() {
+			//PatternStore.actions.expert(PatternStore.getState().advanced);
+			this.expert = this.glosses
+			InterfaceStore.actions.patternMode('expert');
+		},
+		setupCustomAnnotation(div: HTMLElement, plugin: NonNullable<UIStore.ModuleRootState['search']['shared']['customAnnotations'][string]>) {
+			const annotId = div.getAttribute('data-custom-annotation-root')!;
+			const isSimpleAnnotation = div.hasAttribute('data-is-simple');
+
+			const config = CorpusStore.get.allAnnotationsMap()[annotId];
+			const value = isSimpleAnnotation ? PatternStore.getState().simple : PatternStore.getState().extended.annotationValues[annotId];
+
+			const {render, update} = plugin;
+			const ui = render(config, value, Vue);
+
+			if (typeof ui === 'string') div.innerHTML = ui;
+			else if (ui instanceof HTMLElement) div.appendChild(ui);
+			else if (isJQuery(ui)) ui.appendTo(div);
+			else if (isVue(ui)) ui.$mount(div);
+
+			if (!isVue(ui) && update != null) {
+				// setup watcher so custom component is notified of changes to its value by external processes (global form reset, history state restore, etc.)
+				RootStore.store.watch(state => value, (cur, prev) => update(cur, prev, div), {deep: true});
+			}
+		},
+	},
+	watch: {
+		customAnnotations: {
+			handler() {
+				// custom annotation widget setup.
+				// listen for changes, so any late registration is also picked up
+				Vue.nextTick(() => {
+					// intermediate function, check if div is not already initialized, and should actually become the custom component.
+					const setup = (key: string, div: Element|Vue) => {
+						if (!(div instanceof HTMLElement) || !div.hasAttribute('data-custom-annotation-root') || div.children.length) return;
+						const annotId = div.getAttribute('data-custom-annotation-root')!;
+						this.setupCustomAnnotation(div, this.customAnnotations[annotId]!)
+					}
+
+					// by now our dom should have updates, and the extension point (div) should be present
+					// scan to find it.
+					Object.entries(this.$refs).forEach(([refId, ref]) => {
+						if (Array.isArray(ref)) ref.forEach(r => setup(refId, r));
+						else if (ref instanceof HTMLElement) setup(refId, ref);
+					});
+				})
+			},
+			immediate: true,
+			deep: true
 		}
 	},
 	mounted() {

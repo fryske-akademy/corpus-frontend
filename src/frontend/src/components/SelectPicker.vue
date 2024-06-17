@@ -60,12 +60,12 @@
 
 			ref="focusOnEscClose"
 		>
-			<template v-if="displayValues.length && (showValues || !multiple)">
-				<span class="menu-value" v-if="allowHtml" :title="value" v-html="displayValues.join(', ')"/>
+			<template v-if="displayValues.length && showValues">
+				<span class="menu-value" v-if="allowHtml" :title="value + ''" v-html="displayValues.join(', ')"/>
 				<span class="menu-value" v-else :title="displayValues.join(',')">{{displayValues.join(', ')}}</span>
 			</template>
 			<span v-else class="menu-value placeholder">
-				{{placeholder || $attrs.title || (this.multiple ? 'Select values...' : 'Select a value...')}}
+				{{ placeholder || $attrs.title || (multiple ? 'Select values...' : 'Select a value...')}}
 			</span>
 			<span v-if="loading" class="menu-icon fa fa-spinner fa-spin text-muted"></span>
 			<span v-else-if="!showValues && multiple && showValueCount" :class="['menu-icon badge',{'active': displayValues.length}]">
@@ -74,7 +74,7 @@
 			<span :class="['menu-icon', 'fa', 'fa-caret-down', {
 				//'fa-rotate-180': isOpen
 				'fa-flip-vertical': isOpen
-			}]"/>
+			}]"></span>
 		</button>
 
 		<!-- NOTE: might not actually be a child of root element at runtime! Event handling is rather specific -->
@@ -97,7 +97,7 @@
 			ref="menu"
 		>
 			<li class="menu-header">
-			<div v-if="loading && this.editable /* not visible in button when editable */" class="text-center">
+			<div v-if="loading && editable /* not visible in button when editable */" class="text-center">
 				<span class="fa fa-spinner fa-spin text-muted"></span>
 			</div><button v-if="resettable && filteredOptions.length"
 				type="button"
@@ -177,7 +177,7 @@
 // tslint:disable
 
 import Vue from 'vue';
-import { mapReduce, MapOf } from '@/utils';
+import { mapReduce } from '@/utils';
 
 export type SimpleOption = string;
 
@@ -254,7 +254,8 @@ export default Vue.extend({
 		 * If false, immediately emit a change event with a corrected value prop
 		 */
 		allowUnknownValues: Boolean,
-		/** Show selected values in the selection button, only when multiple */
+		allowEmptyGroups: Boolean,
+		/** Show selected values in the selection button or not */
 		showValues: { type: Boolean, default: true },
 		/** Show value count, only when showValues === false */
 		showValueCount: { type: Boolean, default: true },
@@ -278,13 +279,13 @@ export default Vue.extend({
 		value: [String, Array] as any as () => string|string[]|null,
 
 		/** attached to top-level container */
-		'data-width': String,
+		dataWidth: String,
 		/** attached to main input/button */
-		'data-class': [String, Object],
-		'data-style': [String, Object],
-		'data-id': String,
-		'data-name': String,
-		'data-title': String,
+		dataClass: [String, Object],
+		dataStyle: [String, Object],
+		dataId: String,
+		dataName: String,
+		dataTitle: String,
 		/**
 		 * Controls the width of the dropdown menu
 		 * - stretch: grow and shrink with the input
@@ -292,11 +293,11 @@ export default Vue.extend({
 		 * - grow: exactly fit menu content, but grow with input if that is larger
 		 * - anything else: used as css-value ('auto' works!)
 		 */
-		'data-menu-width': {
+		dataMenuWidth: {
 			type: String as any as () => MenuWidthMode,
 			default: 'stretch'
 		},
-		'data-menu-class': [Array, String, Object],
+		dataMenuClass: [Array, String, Object],
 		/** Right-align the dropdown menu, only when menuWidth != 'stretch' */
 		right: Boolean
 	},
@@ -308,7 +309,7 @@ export default Vue.extend({
 		/** Search/custom input value, role depends on editable, searchable */
 		inputValue: '',
 
-		internalModel: {} as MapOf<boolean>,
+		internalModel: {} as Record<string, boolean>,
 
 		// Can't be computed, need to wait until we are mounted
 		// (as container might be a parent element that hasn't fully mounted yet when we init)
@@ -365,7 +366,7 @@ export default Vue.extend({
 					const h = mapGroup(o);
 					const subs: uiOption[] = o.options.map(sub => isSimpleOption(sub) ? mapSimple(sub, o) : mapOption(sub, o));
 					subs.unshift(h);
-					return subs;
+					return (this.allowEmptyGroups || subs.length > 1) ? subs : [];
 				}
 			});
 
@@ -393,7 +394,7 @@ export default Vue.extend({
 
 			return uiOptions;
 		},
-		uiOptionsMap(): MapOf<_uiOpt> { return mapReduce(this.uiOptions.filter(o => o.type === 1) as _uiOpt[], 'value'); },
+		uiOptionsMap(): Record<string, _uiOpt> { return mapReduce(this.uiOptions.filter(o => o.type === 1) as _uiOpt[], 'value'); },
 
 		filteredOptions(): uiOption[] {
 			let options = this.uiOptions;
@@ -491,7 +492,7 @@ export default Vue.extend({
 				return r; // there is no need to declare any explicit width on our menu, as it's a child of our $el and our normal css classes handle everything
 			}
 
-			let widthMode = this['data-menu-width'];
+			let widthMode = this.dataMenuWidth;
 			(widthMode as any) = (this as any).dataMenuWidth;
 			const width = ownRootBoundingRect.width;
 
@@ -674,7 +675,7 @@ export default Vue.extend({
 			}
 		},
 
-		select(opt: _uiOpt): void {
+		select(opt: {disabled?: boolean, value: string}): void {
 			const {disabled, value} = opt;
 
 			if (disabled) {
@@ -870,11 +871,16 @@ export default Vue.extend({
 		if (this.container) {
 			this.containerEl = document.querySelector(this.container);
 		}
+		// @ts-ignore
+		(this.$el).setValue = (v: string|string[]) => this.$emit('input', this.multiple ? [v].flat().filter(v => v != null) : v || null);
 	},
 	beforeDestroy() {
 		this.removeGlobalListeners();
 		// In case container has been set.
 		(this.$refs.menu as HTMLElement).parentElement!.removeChild(this.$refs.menu as HTMLElement);
+
+		// @ts-ignore
+		this.$el.setValue = undefined;
 	},
 });
 </script>
@@ -939,6 +945,7 @@ export default Vue.extend({
 			flex-grow: 0;
 			flex-shrink: 0;
 			flex-basis: auto;
+			margin-right: 0;
 		}
 		>.badge {
 			background-color: #999;

@@ -1,8 +1,7 @@
 import Vue from 'vue';
-import { Store } from 'vuex';
+import { syncPropertyWithLocalStorage } from '@/utils/localstore';
 
 declare const process: any;
-declare var DEBUG_INFO_VISIBLE: boolean; // search.vm
 let debug = Vue.observable({
 	debug: process.env.NODE_ENV === 'development',
 	debug_visible: (typeof DEBUG_INFO_VISIBLE !== 'undefined') ? DEBUG_INFO_VISIBLE || process.env.NODE_ENV === 'development' : false
@@ -13,7 +12,7 @@ let queued: IArguments[] = [];
 // If you wish to see the original logging location, blackbox this script in the chrome devtools
 // For now, seeing the original location is not supported in firefox and edge/ie (and probably safari)
 export function debugLog(...args: any[]) {
-	if (debug) {
+	if (debug.debug) {
 		console.log.apply(console, arguments); //tslint:disable-line
 	} else {
 		queued.push(arguments);
@@ -96,21 +95,9 @@ export function monitorRedraws() {
 	});
 }
 
-// monitorRedraws();
-if (window.localStorage && process.env.NODE_ENV !== 'development') {
-	// only bind to localstorage if not running in development environment (as debug mode is always enabled when running from webpack)
-
-	// wait for other modules to finish initializing, as otherwise there are weird initialization order issues between Vue and Vuex
-	setTimeout(() => {
-		const initial = localStorage.getItem('cf/debug');
-		if (initial != null) {
-			debug.debug = JSON.parse(initial);
-		}
-
-		(new Vue()).$watch(() => debug.debug, v => {
-			localStorage.setItem('cf/debug', JSON.stringify(v));
-		})
-	})
+// only bind to localstorage if not running in development environment (as debug mode is always enabled when running from webpack)
+if (process.env.NODE_ENV !== 'development') {
+	syncPropertyWithLocalStorage('cf/debug', debug, 'debug');
 }
 
 export default debug;

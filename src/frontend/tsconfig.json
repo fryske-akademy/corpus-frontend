@@ -1,5 +1,6 @@
 {
 	"compilerOptions": {
+		"allowJs": true,
 		// Output the most modern javascript instead of downcompiling, let babel handle that
 		"target": "esnext",
 		// Output the most modern import/export statements, instead of converting modules to CommonJs
@@ -42,15 +43,14 @@
 			See https://github.com/vuejs/jsx/tree/dev/packages/babel-preset-jsx
 		*/
 		"jsx": "preserve",
+		"resolveJsonModule": true,
 
 		// Allow @decorator
 		"experimentalDecorators": true,
 		"lib": [
-			"es2017",
 			"dom",
 			"dom.iterable",
-			"es2018.promise",
-			"esnext.array"
+			"ES2019"
 		],
 
 		// Enable importing source files by their absolute path by prefixing with "@/"
@@ -76,4 +76,11 @@
 			"@types/jqueryui"
 		]
 	},
+	"exclude": ["dist"],
+	"vueCompilerOptions": {
+		"target": 2,
+		"extensions": [
+			".vue"
+		]
+	}
 }

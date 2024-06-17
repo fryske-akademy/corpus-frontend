@@ -1,18 +1,20 @@
 package nl.inl.corpuswebsite.utils;
 
 import java.io.File;
-import java.io.FileNotFoundException;
 import java.io.InputStream;
 import java.io.Reader;
 import java.io.StringReader;
 import java.io.StringWriter;
 import java.io.Writer;
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.function.Function;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 import javax.xml.transform.ErrorListener;
 import javax.xml.transform.OutputKeys;
@@ -25,13 +27,11 @@ import javax.xml.transform.stream.StreamResult;
 import javax.xml.transform.stream.StreamSource;
 
 import org.apache.commons.lang3.tuple.Pair;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import net.sf.saxon.trans.XPathException;
 
 public class XslTransformer {
-    private static final Logger logger = LoggerFactory.getLogger(XslTransformer.class);
+    private static final Logger logger = Logger.getLogger(XslTransformer.class.getName());
 
     private static class CapturingErrorListener implements ErrorListener {
         private final List<Pair<String, Exception>> exceptions = new ArrayList<>();
@@ -49,7 +49,7 @@ public class XslTransformer {
         @Override
         public void warning(TransformerException e) throws TransformerException {
             // just log these, no need to store them as errors
-            logger.warn(getDescriptiveMessage(e), e);
+            logger.log(Level.WARNING, getDescriptiveMessage(e), e);
         }
 
         public List<Pair<String, Exception>> getErrorList() {
@@ -70,7 +70,7 @@ public class XslTransformer {
     }
 
     /**
-     * Threadsafe as long as you don't change Configuration, which we don't. See
+     * Thread-safe as long as you don't change Configuration, which we don't. See
      * https://saxonica.plan.io/boards/2/topics/5645.
      */
     private static final TransformerFactory FACTORY
@@ -98,12 +98,9 @@ public class XslTransformer {
      * @param id
      * @param source
      * @return
-     * @throws TransformerConfigurationException
+     * @throws TransformerException
      */
-    private static Transformer get(String id, StreamSource source) throws TransformerException {
-//        boolean put = id != null && useCache && !TEMPLATES.containsKey(id);
-//        boolean has = id != null && useCache && TEMPLATES.containsKey(id);
-
+    private static Transformer get(String id, StreamSource source) throws Exception {
         synchronized (TEMPLATES) {
             try {
                 FACTORY.setErrorListener(new CapturingErrorListener()); // renew to remove old exceptions
@@ -113,42 +110,27 @@ public class XslTransformer {
             } catch (Exception e) {
                 CapturingErrorListener l = (CapturingErrorListener) FACTORY.getErrorListener();
                 if (!l.getErrorList().isEmpty()) {
-                    throw new TransformerException(l.getErrorList().get(0).getLeft(), l.getErrorList().get(0).getRight());
-                } else if (e instanceof TransformerException) {
-                    throw (TransformerException) e;
-                } else if (e.getCause() instanceof TransformerException) {
-                    throw (TransformerException) e.getCause();
-                } else {
-                    throw new TransformerException(e.getMessage(), e);
+                    throw l.getErrorList().get(0).getRight();
                 }
+                throw e;
             }
         }
     }
 
-    public XslTransformer(File stylesheet) throws FileNotFoundException, TransformerException {
+    public XslTransformer(File stylesheet) throws Exception {
         transformer = get(stylesheet.getAbsolutePath(), new StreamSource(stylesheet));
     }
 
-    public XslTransformer(InputStream stylesheet) throws TransformerException {
-        transformer = get(null, new StreamSource(stylesheet));
+    public XslTransformer(String id, URI uri) throws Exception {
+        transformer = get(id, new StreamSource(uri.toString()));
     }
 
-    public XslTransformer(Reader stylesheet) throws TransformerException {
-        transformer = get(null, new StreamSource(stylesheet));
+    public XslTransformer(String id, Reader sheet) throws Exception {
+        transformer = get(id, new StreamSource(sheet));
     }
 
-    /**
-     * stylesheet is assumed to be a resource URI
-     *
-     * @param stylesheet
-     * @throws TransformerException
-     */
-    public XslTransformer(String stylesheet) throws TransformerException {
-        transformer = get(stylesheet, new StreamSource(stylesheet));
-    }
-
-    public XslTransformer(String stylesheet, Reader sheet) throws TransformerException {
-        transformer = get(stylesheet, new StreamSource(sheet));
+    public XslTransformer(String id, String xsl) throws Exception {
+        this(id, new StringReader(xsl));
     }
 
     public String transform(String source)

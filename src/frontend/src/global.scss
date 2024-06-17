@@ -1,3 +1,5 @@
+// NOTE: this file is only included on article, search, corpora, and remote-index pages (those with a dedicated javascript bundle)
+// For *actual* global styles, see main.css
 body {
 	background-image: none;
 }
@@ -131,16 +133,6 @@ ul.nav-tabs.cf-panel-tab-header {
 		border-top-left-radius: 0px;
 		border-top-right-radius: 0px;
 	}
-}
-
-.searchIndicator {
-	color: white;
-	background-color: rgba(0, 0, 0, 0.25);
-	border-radius: 1000px;
-	font-size: 80px;
-	padding: 10px;
-	margin-left: -50px;
-	z-index: 1000;
 }
 
 .disabled > label {

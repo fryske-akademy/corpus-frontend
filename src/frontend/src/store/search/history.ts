@@ -14,37 +14,43 @@ import * as CorpusModule from '@/store/search/corpus';
 import * as InterfaceModule from '@/store/search/form/interface';
 import * as FilterModule from '@/store/search/form/filters';
 import * as GlobalModule from '@/store/search/results/global';
-import * as HitsModule from '@/store/search/results/hits';
-import * as DocsModule from '@/store/search/results/docs';
 import * as PatternModule from '@/store/search/form/patterns';
 import * as ExploreModule from '@/store/search/form/explore';
 import * as GapModule from '@/store/search/form/gap';
+import * as ViewModule from '@/store/search/results/views';
+import * as ConceptModule from '@/store/search/form/conceptStore';
+import * as GlossModule from '@/store/search/form/glossStore';
 
 import UrlStateParser from '@/store/search/util/url-state-parser';
 
 import { NormalizedIndex } from '@/types/apptypes';
 import { debugLog } from '@/utils/debug';
 import { getFilterSummary } from '@/components/filters/filterValueFunctions';
+import { getPatternSummaryExplore, getPatternSummarySearch } from '@/utils';
 
-const version = 6;
+// Update the version whenever one of the properties in type HistoryEntry changes
+// That is enough to prevent loading out-of-date history.
+const version = 8;
 
 type HistoryEntry = {
 	// always set
 	filters: FilterModule.ModuleRootState;
 	gap: GapModule.ModuleRootState;
-	global: GlobalModule.ModuleRootState;
+	global: GlobalModule.ExternalModuleRootState;
 	interface: InterfaceModule.ModuleRootState;
 
-	// Depending on interface.viewedResults, one of these contains actual values,
-	// the other contains defaults (in order to reset inactive parts of the page)
-	hits: HitsModule.ModuleRootState;
-	docs: DocsModule.ModuleRootState;
+	/** The state of the currently active view.
+	Name of the active view is contained in interface.viewedResults */
+	view: ViewModule.ViewRootState,
 
 	// Depending on interface.form, one of these should contain the values, the other contains defaults.
 	// Depending on interface.subForm, one of the subproperties is set, the others contain defaults.
 	// (in order to reset inactive parts of the page)
 	patterns: PatternModule.ModuleRootState;
 	explore: ExploreModule.ModuleRootState;
+
+	concepts: ConceptModule.HistoryState;
+	glosses: GlossModule.HistoryState;
 };
 
 type FullHistoryEntry = HistoryEntry&{
@@ -93,7 +99,7 @@ const get = {
 			# Results: ${entry.interface.form === 'search' ? entry.interface.viewedResults : entry.interface.exploreMode || '-'}
 			# Pattern: ${entry.displayValues.pattern || '-'}
 			# Filters: ${entry.displayValues.filters || '-'}
-			# Grouping: ${entry[entry.interface.viewedResults!].groupBy}
+			# Grouping: ${entry.view.groupBy}
 			# Contains gap values: ${entry.gap.value ? 'yes' : 'no'}
 
 			#####
@@ -144,6 +150,11 @@ const actions = {
 
 		// Order needs to be consistent or hash will be different.
 		const filterSummary: string|undefined = getFilterSummary(Object.values(entry.filters).sort((l, r) => l.id.localeCompare(r.id)));
+		const patternSummary: string|undefined =
+			entry.interface.form === 'search' ? getPatternSummarySearch(entry.interface.patternMode, entry.patterns) :
+			entry.interface.form === 'explore' ? getPatternSummaryExplore(entry.interface.exploreMode, entry.explore, CorpusModule.get.allAnnotationsMap()) :
+			undefined;
+
 		// Should only contain items that uniquely identify a query
 		// Normally this would only be the pattern (including gap values) and filters,
 		// but we've agreed that grouping differently constitutes a new query, so we also need to compare those
@@ -151,7 +162,7 @@ const actions = {
 			filters: entry,
 			pattern,
 			gap: entry.gap,
-			groupBy: entry[entry.interface.viewedResults!].groupBy.concat(entry[entry.interface.viewedResults!].groupByAdvanced).sort((l, r) => l.localeCompare(r)),
+			groupBy: entry.view.groupBy.sort((l, r) => l.localeCompare(r)),
 		};
 
 		const fullEntry: FullHistoryEntry = {
@@ -161,7 +172,7 @@ const actions = {
 			timestamp: new Date().getTime(),
 			displayValues: {
 				filters: filterSummary || '-',
-				pattern: pattern || '-'
+				pattern: patternSummary || '-'
 			}
 		};
 
@@ -187,7 +198,7 @@ const actions = {
 };
 
 const init = () => {
-	index = CorpusModule.getState();
+	index = CorpusModule.getState().corpus!;
 	readFromLocalStorage();
 };
 

@@ -3,22 +3,24 @@ const webpack = require('webpack');
 const {VueLoaderPlugin} = require('vue-loader');
 // const BundleAnalyzerPlugin = require('webpack-bundle-analyzer').BundleAnalyzerPlugin;
 const CleanWebpackPlugin = require('clean-webpack-plugin');
-const ForkTsCheckerWebpackPlugin = require('fork-ts-checker-webpack-plugin');
 
 module.exports = {
 	entry: {
 		// Output multiple files, one for each main page - important!: also include the polyfills in the output bundle
-		article: ['./src/utils/enable-polyfills.ts', './src/article.ts'],
-		corpora: ['./src/utils/enable-polyfills.ts', './src/corpora.ts'],
-		search: ['./src/utils/enable-polyfills.ts', './src/search.tsx'],
-		'remote-index': ['./src/utils/enable-polyfills.ts', './src/remote-index.ts']
+		article:        ['./src/utils/enable-polyfills.ts', './src/article.ts'],
+		corpora:        ['./src/utils/enable-polyfills.ts', './src/corpora.ts'],
+		search:         ['./src/utils/enable-polyfills.ts', './src/search.tsx'],
+		'remote-index': ['./src/utils/enable-polyfills.ts', './src/remote-index.ts'],
+		callback:       ['./src/utils/enable-polyfills.ts', './src/callback.ts'],
+		config:         ['./src/utils/enable-polyfills.ts', './src/config.ts']
 	},
 	output: {
 		filename: '[name].js',
 		// Path on disk for output file
 		path: path.resolve(__dirname, 'dist'),
-		// Path in webpack-dev-server for compiled files (has priority over disk files in case both exist)
-		publicPath: '/dist/',
+		// Have bundle paths be relative to the root of the website (e.g. relative to the script requesting another part of the bundle, so basically to themselves)
+		// This is required for monaco editor to work correctly, as it loads additional files from the same directory as the main bundle
+		publicPath: 'auto',
 	},
 	resolve: {
 		extensions: ['.js', '.ts'], // enable autocompleting .ts and .js extensions when using import '...'
@@ -26,10 +28,13 @@ module.exports = {
 			// Enable importing source files by their absolute path by prefixing with "@/"
 			// Note: this also requires typescript to be able to find the imports (though it doesn't use them other than for type checking), see tsconfig.json
 			"@": path.join(__dirname, "src"),
+			// Make import Vue from 'vue' import the version that includes the template compiler.
+			// Normally you don't need this, but we allow plugin components that may have to be compiled runtime.
+			// Hence we need this alias.
+			'vue$': 'vue/dist/vue.esm.js'
 		}
 	},
 	module: {
-		// import/exports
 		rules: [{
 			test: /\.css$/,
 			use: [ 'vue-style-loader', 'css-loader'],
@@ -48,25 +53,12 @@ module.exports = {
 		}, {
 			test: /\.tsx$/,
 			use: [{
-				loader: 'babel-loader',
+				// required for jsx
+				loader: 'babel-loader'
 			}, {
 				loader: 'ts-loader',
 				options: {
-					/*
-					Required for webpack-dev-server to support HMR (hot module reloading) from typescript files
-					This however disables all type checking errors/warnings
-					These are then re-enabled through ForkTsCheckerWebpackPlugin
-					NOTE: the default behavior is to refresh the entire page on changes in a module
-					this can be prevented by adding the following code (essentially manually replacing your imported functions with the updated version):
-					But it needs to be done everywhere the module is used, and for every import that you want to update without refreshing the page...
-					if (module.hot) {
-						module.hot.accept('./exports-string', () => {
-							const { valueToLog } = require('./exports-string'); // original imported value doesn't update, so you need to import it again
-							document.write(`HMR valueToLog: ${valueToLog}`);
-						});
-					}
-					*/
-					transpileOnly: true,
+					transpileOnly: false,
 					appendTsxSuffixTo: [/\.vue$/],
 				}
 			}]
@@ -99,6 +91,9 @@ module.exports = {
 			test: /\.js$/,
 			exclude: [/node_modules/, '/src/vendor'],
 			loader: 'babel-loader',
+		}, {
+			test: /\.ttf$/,
+			type: 'asset/resource'
 		}]
 	},
 	plugins: [
@@ -111,10 +106,6 @@ module.exports = {
 			'window.jQuery':    'jquery',
 			'jQuery':           'jquery',
 			'$':                'jquery',
-			'CodeMirror':       'codemirror',
-		}),
-		new ForkTsCheckerWebpackPlugin({
-			// vue: true
 		}),
 		new VueLoaderPlugin(),
 		// new BundleAnalyzerPlugin(),

@@ -11,25 +11,29 @@ import java.io.OutputStreamWriter;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
+import java.util.logging.Logger;
 
 import javax.servlet.ServletException;
 import javax.servlet.http.Cookie;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
+import org.apache.commons.lang3.StringUtils;
 import org.apache.velocity.Template;
 import org.apache.velocity.VelocityContext;
 import org.apache.velocity.app.event.EventCartridge;
 import org.apache.velocity.app.event.ReferenceInsertionEventHandler;
 import org.apache.velocity.tools.generic.DateTool;
 import org.apache.velocity.tools.generic.EscapeTool;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
+import nl.inl.corpuswebsite.utils.GlobalConfig;
+import nl.inl.corpuswebsite.utils.GlobalConfig.Keys;
+import nl.inl.corpuswebsite.utils.QueryException;
+import nl.inl.corpuswebsite.utils.ReturnToClientException;
 import nl.inl.corpuswebsite.utils.WebsiteConfig;
 
 public abstract class BaseResponse {
-    protected static final Logger logger = LoggerFactory.getLogger(BaseResponse.class);
+    protected static final Logger logger = Logger.getLogger(BaseResponse.class.getName());
 
     protected static final String OUTPUT_ENCODING = "UTF-8";
 
@@ -43,10 +47,12 @@ public abstract class BaseResponse {
     protected HttpServletResponse response;
 
     /** Velocity template variables */
-    protected VelocityContext context = new VelocityContext();
+    protected final VelocityContext model = new VelocityContext();
+
+    protected String name = "";
 
     /** Does this response require a corpus to be set? */
-    private boolean requiresCorpus = false;
+    private final boolean requiresCorpus;
 
     /**
      * The corpus this response is being generated for.
@@ -66,7 +72,8 @@ public abstract class BaseResponse {
      * @param requiresCorpus when set, causes an exception to be thrown when {@link BaseResponse#corpus} is not set when
      *        {@link #completeRequest()} is called.
      */
-    protected BaseResponse(boolean requiresCorpus) {
+    protected BaseResponse(String name, boolean requiresCorpus) {
+        this.name = name;
         this.requiresCorpus = requiresCorpus;
     }
 
@@ -84,7 +91,7 @@ public abstract class BaseResponse {
      * @throws ServletException when corpus is required but missing.
      */
     public void init(HttpServletRequest request, HttpServletResponse response, MainServlet servlet, Optional<String> corpus, List<String> pathParameters) throws ServletException {
-        if (this.requiresCorpus && !corpus.isPresent()) {
+        if (this.requiresCorpus && corpus.isEmpty()) {
         	throw new ServletException("Response requires a corpus");
         }
         this.request = request;
@@ -93,40 +100,57 @@ public abstract class BaseResponse {
         this.corpus = corpus;
         this.pathParameters = pathParameters;
         WebsiteConfig cfg = servlet.getWebsiteConfig(corpus);
+        GlobalConfig globalCfg = servlet.getGlobalConfig();
 
         // Allow all origins on all requests
         this.response.addHeader("Access-Control-Allow-Origin", "*");
-        
+
         // Utils
-        context.put("esc", esc);
-        context.put("date", date);
+        model.put("esc", esc);
+        model.put("date", date);
         // For use in queryParameters to ensure clients don't cache old css/js when the application has updated.
-        // During development, there's usually no WAR, so no build time either, but we assume the developer knows to ctrl+f5
-        context.put("cache", servlet.getWarBuildTime().hashCode());
+        model.put("cache", GlobalConfig.commitHash);
+        // title of the current page
+        model.put("page", this.name);
 
         // Stuff for use in constructing the page
-        context.put("websiteConfig", cfg);
-        context.put("buildTime", servlet.getWarBuildTime());
-        context.put("jspath", servlet.getAdminProps().getProperty(MainServlet.PROP_JSPATH));
-        cfg.getAnalyticsKey().ifPresent(key -> context.put("googleAnalyticsKey", key));
+        model.put("websiteConfig", cfg);
 
-        if (servlet.getBannerMessage().isPresent() && !this.isCookieSet("banner-hidden", Integer.toString(servlet.getBannerMessage().get().hashCode()))) {
-            context.put("bannerMessage", servlet.getBannerMessage().get());
-            context.put("bannerMessageCookie",
-                        "banner-hidden="+servlet.getBannerMessage().get().hashCode()+
-                        "; Max-Age="+24*7*3600+
-                        "; Path="+servlet.getServletContext().getContextPath()+"/");
-        }
+        // Version info
+        model.put("commitHash", GlobalConfig.commitHash);
+        model.put("commitTime", GlobalConfig.commitTime);
+        model.put("commitMessage", GlobalConfig.commitMessage);
+        model.put("version", GlobalConfig.version);
+
+        cfg.getAnalyticsKey().ifPresent(key -> model.put("googleAnalyticsKey", key));
+
+        Optional.ofNullable(globalCfg.get(Keys.BANNER_MESSAGE))
+                .filter(msg -> !this.isCookieSet("banner-hidden", Integer.toString(msg.hashCode())))
+                .ifPresent(msg -> {
+                    model.put("bannerMessage", msg);
+                    model.put("bannerMessageCookie",
+                                "banner-hidden="+msg.hashCode()+
+                                "; Max-Age="+24*7*3600+
+                                "; Path="+globalCfg.get(Keys.CF_URL_ON_CLIENT)+"/");
+        });
+
+        model.put("JSPATH", globalCfg.get(Keys.JSPATH));
+        model.put("FRONTEND_WITH_CREDENTIALS", globalCfg.getBool(Keys.FRONTEND_WITH_CREDENTIALS));
 
         // Clientside js variables (some might be used in vm directly)
-        context.put("pathToTop", servlet.getServletContext().getContextPath());
-        context.put("blsUrl", servlet.getExternalWebserviceUrl());
+        model.put("CF_URL_ON_CLIENT", globalCfg.get(Keys.CF_URL_ON_CLIENT));
+        // The config setting never ends in a slash, but in the past it did,
+        // Preserve this as clientside js/user scripts might rely on this.
+        model.put("BLS_URL_ON_CLIENT", globalCfg.get(Keys.BLS_URL_ON_CLIENT) + "/");
 
-        logger.debug("jspath {}", servlet.getAdminProps().getProperty(MainServlet.PROP_JSPATH));
+        // OIDC
+        model.put("OIDC_AUTHORITY", globalCfg.get(Keys.OIDC_AUTHORITY));
+        model.put("OIDC_METADATA_URL", globalCfg.get(Keys.OIDC_METADATA_URL));
+        model.put("OIDC_CLIENT_ID", globalCfg.get(Keys.OIDC_CLIENT_ID));
 
         // HTML-escape all data written into the velocity templates by default
         // Only allow access to the raw string if the expression contains the word "unescaped"
-        EventCartridge cartridge = context.getEventCartridge();
+        EventCartridge cartridge = model.getEventCartridge();
         if (cartridge == null) {
             cartridge = new EventCartridge();
             cartridge.addReferenceInsertionEventHandler(new ReferenceInsertionEventHandler() {
@@ -142,7 +166,7 @@ public abstract class BaseResponse {
                     return escape ? esc.html(val) : val;
                 }
             });
-            context.attachEventCartridge(cartridge);
+            model.attachEventCartridge(cartridge);
         }
 
     }
@@ -160,7 +184,7 @@ public abstract class BaseResponse {
 
         // Merge context into the page template and write to output stream
         try (OutputStreamWriter osw = new OutputStreamWriter(response.getOutputStream(), OUTPUT_ENCODING)) {
-            template.merge(context, osw);
+            template.merge(model, osw);
             osw.flush();
         } catch (Exception e) {
             throw new RuntimeException(e);
@@ -184,20 +208,7 @@ public abstract class BaseResponse {
      * @return value of the paramater
      */
     public String getParameter(String name, String defaultValue) {
-        // get the trimmed parameter value
-        String value = request.getParameter(name);
-
-        if (value != null) {
-            value = value.trim();
-
-            // if the parameter value is an empty string
-            if (value.length() == 0)
-                value = defaultValue;
-        } else {
-            value = defaultValue;
-        }
-
-        return value;
+        return Optional.ofNullable(request.getParameter(name)).map(StringUtils::trimToNull).orElse(defaultValue);
     }
 
     /**
@@ -208,46 +219,21 @@ public abstract class BaseResponse {
      * @return value of the paramater
      */
     public int getParameter(String name, int defaultValue) {
-        final String stringToParse = getParameter(name, "" + defaultValue);
+        String value = getParameter(name, Integer.toString(defaultValue));
         try {
-            return Integer.parseInt(stringToParse);
+            return Integer.parseInt(value);
         } catch (NumberFormatException e) {
-            logger.info("Could not parse parameter '{}', value '{}'. Using default ({})", name, stringToParse, defaultValue);
+            logger.fine(String.format("Could not parse parameter '%s', value '%s'. Using default (%s)", name, value, defaultValue));
             return defaultValue;
         }
     }
 
     /**
-     * Returns the value of a servlet parameter, or the default value.
-     *
-     * @param name name of the parameter
-     * @param defaultValue default value
-     * @return value of the paramater
+     * @throws IOException On general IO problems (i.e. not our code).
+     * @throws ReturnToClientException When flow was aborted somewhere deep in the code, and we just want to abort completely. But we do want to pass a message and status code.
+     * @throws QueryException When some error occurred that might be recoverable further up the stack (such as BlackLab not having a certain index).
      */
-    public boolean getParameter(String name, boolean defaultValue) {
-        return getParameter(name, defaultValue ? "on" : "").equals("on");
-    }
-
-    public Integer getParameter(String name, Integer defaultValue) {
-        final String stringToParse = getParameter(name, "" + defaultValue);
-
-        return Integer.parseInt(stringToParse);
-    }
-
-    public String[] getParameterValues(String name, String defaultValue) {
-        String[] values = request.getParameterValues(name);
-
-        if (values == null)
-            values = new String[] { defaultValue };
-
-        return values;
-    }
-
-    public List<String> getParameterValuesAsList(String name, String defaultValue) {
-        return Arrays.asList(getParameterValues(name, defaultValue));
-    }
-
-    protected abstract void completeRequest() throws IOException;
+    protected abstract void completeRequest() throws IOException, ReturnToClientException, QueryException;
 
     public boolean isCorpusRequired() {
         return requiresCorpus;

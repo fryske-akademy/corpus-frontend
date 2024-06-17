@@ -2,15 +2,15 @@
 	<div class="container">
 		<div class="panel cf-panel cf-panel-lg">
 			<div v-if="!isInitialized && !error" class="text-center">
-				<h3>Loading your corpora...</h3>
-				<span class="fa fa-spinner fa-spin" style="font-size:60px;"/>
+				<h3>{{ $t('remoteIndex.loadingCorpora') }}</h3>
+				<span class="fa fa-spinner fa-spin" style="font-size:60px;"></span>
 			</div>
 
 
 			<div v-else-if="!selectedCorpus">
-				<h3>Please pick a corpus</h3>
+				<h3>{{ $t('remoteIndex.pickCorpus') }}</h3>
 				<form class="form-group" @submit.prevent="download">
-					<label for="corpus_select">Add files to an existing corpus...</label>
+					<label for="corpus_select">{{ $t('remoteIndex.addFilesToCorpus') }}</label>
 					<div class="input-group">
 						<SelectPicker
 							hideEmpty
@@ -21,7 +21,7 @@
 
 							:options="availableCorporaOptions"
 							:loading="isLoadingCorpora"
-							:placeholder="isLoadingCorpora ? 'Loading your corpora...' : 'Select a corpus'"
+							:placeholder="isLoadingCorpora ? $t('remoteIndex.loadingCorpora') : $t('remoteIndex.selectCorpus')"
 							:disabled="isLoadingCorpora"
 
 							v-model="preselectedCorpus"
@@ -30,7 +30,7 @@
 							@change="log('change', $event)"
 						/>
 						<div class="input-group-btn">
-							<button type="submit" class="btn btn-primary" :disabled="!preselectedCorpus">Select</button>
+							<button type="submit" class="btn btn-primary" :disabled="!preselectedCorpus">{{ $t('remoteIndex.select') }}</button>
 						</div>
 					</div>
 				</form>
@@ -39,16 +39,16 @@
 					'form-group': true,
 					'has-error': !newCorpusNameValid
 				}" @submit.prevent="createCorpus">
-					<label for="new_corpus_name">or create a new corpus and add to that...</label>
+					<label for="new_corpus_name">{{ $t('remoteIndex.createNewCorpus') }}</label>
 					<div class="input-group">
-						<input type="text" class="form-control" :disabled="isCreatingCorpus" placeholder="Name" name="new_corpus_name" id="new_corpus_name" v-model="newCorpusName" />
+						<input type="text" class="form-control" :disabled="isCreatingCorpus" :placeholder="$t('remoteIndex.name')" name="new_corpus_name" id="new_corpus_name" v-model="newCorpusName" />
 						<div class="input-group-btn">
 							<button type="submit" class="btn btn-primary" :disabled="!newCorpusNameValid || isCreatingCorpus || !newCorpusName.length || !blacklabData.user">
-								<span v-if="isCreatingCorpus" class="fa fa-spinner fa-spin"/> Create
+								<span v-if="isCreatingCorpus" class="fa fa-spinner fa-spin"></span> {{ $t('remoteIndex.create') }}
 							</button>
 						</div>
 					</div>
-					<span v-if="!newCorpusNameValid" class="help-block">Illegal corpus name. Corpus name must be between 3 and 30 characters and may not contain special characters.</span>
+					<span v-if="!newCorpusNameValid" class="help-block">{{ $t('remoteIndex.illegalCorpusName') }}</span>
 				</form>
 			</div>
 			<div v-else-if="!error">
@@ -62,7 +62,7 @@
 
 			<div v-if="error">
 				<span class="text-danger"><span class="fa fa-exclamation-triangle"></span> {{error}}</span><br>
-				<button v-if="retryError" class="btn btn-default btn-sm" @click="retryError(), error = null, retryError = null">Retry</button>
+				<button v-if="retryError" class="btn btn-default btn-sm" @click="retryError(), error = null, retryError = null">{{ $t('remoteIndex.retry') }}</button>
 			</div>
 		</div>
 	</div>
@@ -73,15 +73,12 @@ import Vue from 'vue';
 import Axios from 'axios';
 
 import UrlStateParserBase from '@/store/util/url-state-parser-base';
-import {blacklab, paths} from '@/api';
-import {debugLog} from '@/utils/debug';
+import {blacklab} from '@/api';
 
 import SelectPicker, {OptGroup} from '@/components/SelectPicker.vue';
 
 import * as AppTypes from '@/types/apptypes';
 import * as BLTypes from '@/types/blacklabtypes';
-
-declare const CONTEXT_URL: string;
 
 class UrlStateParser extends UrlStateParserBase<{
 	file: string;
@@ -108,7 +105,7 @@ export default Vue.extend({
 		retryError: null as null|(() => void),
 
 		blacklabData: {
-			corpora: [] as AppTypes.NormalizedIndexOld[],
+			corpora: [] as AppTypes.NormalizedIndexBase[],
 			user: null as null|BLTypes.BLUser
 		},
 
@@ -120,7 +117,7 @@ export default Vue.extend({
 		// Creating/selecting a new corpus
 		newCorpusName: '',
 		preselectedCorpus: '',
-		selectedCorpus: null as null|AppTypes.NormalizedIndexOld,
+		selectedCorpus: null as null|AppTypes.NormalizedIndexBase,
 
 		actionTitle: '',
 		action: '',
@@ -250,7 +247,7 @@ export default Vue.extend({
 						}
 					}
 				})
-				
+
 				const filename = r.headers["content-disposition"]?.split('filename=')[1]?.split(';')[0] ?? this.urlParams.file
 				file = new File([new Blob([r.data])], filename);
 
@@ -268,7 +265,7 @@ export default Vue.extend({
 
 			// we need to use a promise here because we want to continue before the request is wholly finished
 			try {
-				await new Promise((resolve, reject) => {
+				await new Promise<void>((resolve, reject) => {
 					let resolved = false;
 					const { request, cancel } = blacklab.postDocuments(
 						this.selectedCorpus!.id,
@@ -300,7 +297,7 @@ export default Vue.extend({
 			}
 
 			try {
-				let r: AppTypes.NormalizedIndexOld;
+				let r: AppTypes.NormalizedIndexBase;
 				while ((r = await blacklab.getCorpusStatus(this.selectedCorpus!.id)) && r.indexProgress && !indexError) {
 					const {filesProcessed: files, docsDone: docs, tokensProcessed: tokens} = r.indexProgress!;
 					this.action = `Indexing... - ${files} files, ${docs} documents, and ${tokens} tokens indexed so far...`;

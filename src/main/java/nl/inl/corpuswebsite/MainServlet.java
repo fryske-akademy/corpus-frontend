@@ -6,79 +6,71 @@
  */
 package nl.inl.corpuswebsite;
 
-import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
-import java.io.FileReader;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.Reader;
-import java.io.StringReader;
 import java.io.UnsupportedEncodingException;
-import java.net.URISyntaxException;
-import java.net.URL;
 import java.net.URLDecoder;
-import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.InvalidPathException;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Enumeration;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.Properties;
 import java.util.function.Function;
 import java.util.jar.Manifest;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 import javax.servlet.ServletConfig;
+import javax.servlet.ServletContext;
 import javax.servlet.ServletException;
 import javax.servlet.http.HttpServlet;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
-import javax.xml.parsers.ParserConfigurationException;
 import javax.xml.transform.TransformerException;
 
 import org.apache.commons.configuration2.ex.ConfigurationException;
-import org.apache.commons.lang.StringUtils;
-import org.apache.commons.lang.SystemUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.velocity.Template;
 import org.apache.velocity.app.Velocity;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.xml.sax.SAXException;
 
 import nl.inl.corpuswebsite.response.AboutResponse;
+import nl.inl.corpuswebsite.response.ApiResponse;
 import nl.inl.corpuswebsite.response.ArticleResponse;
 import nl.inl.corpuswebsite.response.ConfigResponse;
+import nl.inl.corpuswebsite.response.ConfigWizardResponse;
 import nl.inl.corpuswebsite.response.CorporaDataResponse;
 import nl.inl.corpuswebsite.response.CorporaResponse;
 import nl.inl.corpuswebsite.response.ErrorResponse;
 import nl.inl.corpuswebsite.response.HelpResponse;
+import nl.inl.corpuswebsite.response.OidcCallbackResponse;
 import nl.inl.corpuswebsite.response.RemoteIndexResponse;
 import nl.inl.corpuswebsite.response.SearchResponse;
+import nl.inl.corpuswebsite.utils.BlackLabApi;
 import nl.inl.corpuswebsite.utils.CorpusConfig;
-import nl.inl.corpuswebsite.utils.QueryServiceHandler;
-import nl.inl.corpuswebsite.utils.QueryServiceHandler.QueryException;
+import nl.inl.corpuswebsite.utils.CorpusFileUtil;
+import nl.inl.corpuswebsite.utils.GlobalConfig;
+import nl.inl.corpuswebsite.utils.GlobalConfig.Keys;
+import nl.inl.corpuswebsite.utils.QueryException;
+import nl.inl.corpuswebsite.utils.Result;
+import nl.inl.corpuswebsite.utils.ReturnToClientException;
 import nl.inl.corpuswebsite.utils.WebsiteConfig;
 import nl.inl.corpuswebsite.utils.XslTransformer;
 
 /**
  * Main servlet class for the corpus application.
- *
  * Reads the config, initializes stuff and dispatches requests.
  */
 public class MainServlet extends HttpServlet {
 
-    private static final Logger logger = LoggerFactory.getLogger(MainServlet.class);
+    private static final Logger logger = Logger.getLogger(MainServlet.class.getName());
 
     private static final String DEFAULT_PAGE = "corpora";
 
@@ -93,11 +85,6 @@ public class MainServlet extends HttpServlet {
     private static final Map<String, WebsiteConfig> configs = new HashMap<>();
 
     /**
-     * Per-corpus structure and configuration gotten from blacklab-server (IndexStructure)
-     */
-    private static final Map<String, Pair<CorpusConfig, Exception>> corpusConfigs = new HashMap<>();
-
-    /**
      * Our Velocity templates
      */
     private static final Map<String, Template> templates = new HashMap<>();
@@ -105,187 +92,56 @@ public class MainServlet extends HttpServlet {
     /**
      * Xslt transformers for corpora
      */
-    private static final Map<String, Pair<Optional<XslTransformer>, Optional<Exception>>> articleTransformers = new HashMap<>();
+    private static final Map<String, Result<XslTransformer, TransformerException>> articleTransformers = new HashMap<>();
 
     /**
      * The response classes for our URI patterns
      */
     private static final Map<String, Class<? extends BaseResponse>> responses = new HashMap<>();
 
-    /**
-     * Our context path (first part of our URI path)
-     */
-    private String contextPath;
-
-    // @formatter:off
-    /** Message to display at the top of the page. Note that this may contain HTML. https://github.com/INL/corpus-frontend/issues/247 */
-    public static final String PROP_BANNER_MESSAGE          = "bannerMessage";
-    /** Url to reach blacklab-server from this application */
-    public static final String PROP_BLS_CLIENTSIDE          = "blsUrlExternal";
-    /** Url to reach blacklab-server from the browser */
-    public static final String PROP_BLS_SERVERSIDE          = "blsUrl";
-    /** Where static content, custom xslt and other per-corpus data is stored */
-    public static final String PROP_DATA_PATH               = "corporaInterfaceDataDir";
-    /** Name of the default fallback directory/corpus in the PROP_DATA_PATH */
-    public static final String PROP_DATA_DEFAULT            = "corporaInterfaceDefault";
-    /** Development mode, allow script tags to load load js from an external server (webpack-dev-server), defaults to $pathToTop/js/ */
-    public static final String PROP_JSPATH                  = "jspath"; // usually set to http://127.0.0.1/dist/ for development
-    /** Development mode, disable caching of any corpus data (e.g. search.xml, article.xsl, meta.xsl etc) */
-    public static final String PROP_CACHE                   = "cache";
-    /** Enable/disable the debug info checkbox in the interface */
-    public static final String PROP_DEBUG_CHECKBOX_VISIBLE  = "debugInfo";
-    // @formatter:on
-
-    /**
-     * Properties from the external config file, e.g. BLS URLs, Google Analytics
-     * key, etc.
-     * Several of these properties have defaults, take care to use getProperty() instead of direct get()
-     */
-    private Properties adminProps = new Properties();
-
-    /**
-     * Time the WAR was built. "UNKNOWN" if no WAR or some error occurs.
-     */
-    private static String warBuildTime = null;
-
-    private static Properties getDefaultProps(String contextPath) {
-        // @formatter:off
-        Properties p = new Properties();
-        p.setProperty(PROP_BLS_CLIENTSIDE,          "/blacklab-server"); // no domain to account for proxied servers
-        p.setProperty(PROP_BLS_SERVERSIDE,          "http://localhost:8080/blacklab-server/");
-        p.setProperty(PROP_DATA_PATH,               "/etc/blacklab/projectconfigs");
-        p.setProperty(PROP_DATA_DEFAULT,            "default");
-        p.setProperty(PROP_JSPATH,                  contextPath+"/js");
-        p.setProperty(PROP_CACHE, 					"false");
-        p.setProperty(PROP_DEBUG_CHECKBOX_VISIBLE,  "false");
-        // not all properties may need defaults
-        // @formatter:on
-
-        if (SystemUtils.IS_OS_WINDOWS)
-            p.setProperty(PROP_DATA_PATH, "C:\\etc\\blacklab\\projectconfigs");
-
-        return p;
-    }
+    private GlobalConfig config;
 
     @Override
     public void init(ServletConfig cfg) throws ServletException {
-        super.init(cfg);
-
         try {
-            startVelocity(cfg);
+            super.init(cfg);
 
-            String warName = cfg.getServletContext().getContextPath().replaceAll("^/", "");
-            contextPath = cfg.getServletContext().getContextPath();
+            ServletContext ctx = cfg.getServletContext();
+            this.config = GlobalConfig.loadGlobalConfig(ctx);
+            startVelocity(ctx);
 
-            // Load the external properties file (for administration settings)
-            String adminPropFileName = warName + ".properties";
-            File adminPropFile = findPropertiesFile(adminPropFileName);
-            adminProps = new Properties(getDefaultProps(contextPath));
+            XslTransformer.setUseCache(this.useCache(null));
+            BlackLabApi.setBlsUrl(config.get(Keys.BLS_URL_ON_SERVER));
 
-            if (adminPropFile == null || !adminPropFile.exists()) {
-                logger
-                    .info("File {} (with blsUrl and blsUrlExternal settings) not found in webapps, /etc/blacklab/ or temp dir; will use defaults",
-                          adminPropFile);
-            } else if (!adminPropFile.isFile()) {
-                throw new ServletException("Annotation file " + adminPropFile + " is not a regular file!");
-            } else if (!adminPropFile.canRead()) {
-                throw new ServletException("Annotation file " + adminPropFile + " exists but is unreadable!");
-            } else {
-                // File exists and can be read. Read it.
-                logger.info("Reading corpus-frontend property file: {}", adminPropFile);
-                try (Reader in = new BufferedReader(new FileReader(adminPropFile))) {
-                    adminProps.load(in);
-                }
-            }
-
-            Enumeration<?> propKeys = adminProps.propertyNames();
-            while (propKeys.hasMoreElements()) {
-                String key = (String) propKeys.nextElement();
-                if (!adminProps.containsKey(key))
-                    logger.debug("Annotation {} not configured, using default: {}", key, adminProps.getProperty(key));
-            }
-            if (!Paths.get(adminProps.getProperty(PROP_DATA_PATH)).isAbsolute()) {
-                throw new ServletException(PROP_DATA_PATH + " setting should be an absolute path");
-            }
-            XslTransformer.setUseCache(this.useCache());
+            // Map responses, the majority of these can be served for a specific corpus, or as a general autosearch page
+            // E.G. the AboutResponse is mapped to /<root>/<corpus>/about and /<root>/about
+            responses.put(DEFAULT_PAGE, CorporaResponse.class);
+            responses.put("about", AboutResponse.class);
+            responses.put("help", HelpResponse.class);
+            responses.put("search", SearchResponse.class);
+            responses.put("docs", ArticleResponse.class);
+            responses.put("static", CorporaDataResponse.class);
+            responses.put("upload", RemoteIndexResponse.class);
+            responses.put("config", ConfigResponse.class);
+            responses.put("configwizard", ConfigWizardResponse.class);
+            responses.put("api", ApiResponse.class);
+            responses.put("callback", OidcCallbackResponse.class);
         } catch (ServletException e) {
             throw e;
         } catch (Exception e) {
             throw new ServletException(e);
         }
-
-        // Map responses, the majority of these can be served for a specific corpus, or as a general autosearch page
-        // E.G. the AboutResponse is mapped to /<root>/<corpus>/about and /<root>/about
-        responses.put(DEFAULT_PAGE, CorporaResponse.class);
-        responses.put("about", AboutResponse.class);
-        responses.put("help", HelpResponse.class);
-        responses.put("search", SearchResponse.class);
-        responses.put("docs", ArticleResponse.class);
-        responses.put("static", CorporaDataResponse.class);
-        responses.put("upload", RemoteIndexResponse.class);
-        responses.put("config", ConfigResponse.class);
     }
 
     /**
-     * Looks for a property file with the specified name, either in the Tomcat
-     * webapps dir, in /etc/blacklab on Unix or in the temp dir (/tmp on Unix,
-     * %temp% on Windows).
+     * Start the templating engine. Loading settings from {@link #VELOCITY_PROPERTIES}
      *
-     * @param fileName property file name
-     * @return the File or null if not found
+     * @param ctx configuration object
+     * @throws IOException if the velocity config file could not be read
      */
-    private File findPropertiesFile(String fileName) {
-        String configDir = System.getenv("AUTOSEARCH_CONFIG_DIR");
-        if (configDir != null) {
-            File fileInConfigDir = new File(configDir, fileName);
-            if (fileInConfigDir.exists() && fileInConfigDir.canRead() && fileInConfigDir.isFile())
-                return fileInConfigDir;
-            else
-                logger.info("AUTOSEARCH_CONFIG_DIR specifies file {} but it cannot be read", fileInConfigDir);
-        }
-
-        String warPath = getServletContext().getRealPath("/");
-        if (warPath != null) {
-            File fileInWebappsDir = new File(new File(warPath).getParentFile(), fileName);
-            if (fileInWebappsDir.exists()) {
-                return fileInWebappsDir;
-            }
-        } else {
-            logger.info("(WAR was not extracted to file system; skip looking for {} file in webapps dir)", fileName);
-        }
-
-        boolean isWindows = SystemUtils.IS_OS_WINDOWS;
-        File fileInEtc = new File("/etc/blacklab", fileName);
-        if (!isWindows && !fileInEtc.exists()) {
-            fileInEtc = new File("/vol1/etc/blacklab", fileName); // UGLY, will fix later
-        }
-        if (!isWindows && fileInEtc.exists()) {
-            if (!fileInEtc.canRead()) {
-                log("Found " + fileInEtc + " but cannot read; check permissions and SELinux context.");
-            }
-            return fileInEtc;
-        }
-
-        File tmpDir = isWindows ? new File(System.getProperty("java.io.tmpdir")) : new File("/tmp");
-        File fileInTmpDir = new File(tmpDir, fileName);
-        if (fileInTmpDir.exists()) {
-            if (!fileInTmpDir.canRead()) {
-                log("Found " + fileInTmpDir + " but cannot read; check permissions and SELinux context.");
-            }
-            return fileInTmpDir;
-        }
-
-        return null;
-    }
-
-    /**
-     * Start the templating engine
-     *
-     * @param servletConfig configuration object
-     * @throws Exception
-     */
-    private void startVelocity(ServletConfig servletConfig) throws Exception {
-        Velocity.setApplicationAttribute("javax.servlet.ServletContext", servletConfig.getServletContext());
+    private void startVelocity(ServletContext ctx) throws IOException {
+        // Read in the WebApplicationResourceLoader
+        Velocity.setApplicationAttribute(ServletContext.class.getName(), ctx);
 
         Properties p = new Properties();
         try (InputStream is = getServletContext().getResourceAsStream(VELOCITY_PROPERTIES)) {
@@ -317,9 +173,12 @@ public class MainServlet extends HttpServlet {
             }
         }
 
-        // The template doesn't exist so we'll display an error page
-        // it is important that the error template is available
+        // The template doesn't exist, so we'll display an error page
+        // it is important that the error template is available,
         // or we'll end up in an infinite loop
+        if (templateName.equals("error.vm")) {
+            throw new RuntimeException("Could not find error template, giving up");
+        }
         return getTemplate("error");
     }
 
@@ -333,45 +192,32 @@ public class MainServlet extends HttpServlet {
         Function<String, WebsiteConfig> gen = __ ->
             getProjectFile(corpus, "search.xml")
             .map(configFile -> {
-                try { return new WebsiteConfig(configFile, Optional.ofNullable(getCorpusConfig(corpus).getLeft()), contextPath); }
+                try { return new WebsiteConfig(configFile, config.get(Keys.CF_URL_ON_CLIENT), corpus); }
                 catch (ConfigurationException e) { throw new RuntimeException("Could not read search.xml " + configFile, e); }
             })
             .orElseThrow(() -> new IllegalStateException("No search.xml, and no default in jar either"));
 
-        return useCache() ? configs.computeIfAbsent(corpus.orElse(null), gen) : gen.apply(corpus.orElse(null));
+        return useCache(null) ? configs.computeIfAbsent(corpus.orElse(null), gen) : gen.apply(corpus.orElse(null));
     }
 
+    // TODO use network-level caching or something, so we automatically handle lifetime, authentication, etc.
+    private static final Map<String, Result<CorpusConfig, Exception>> configCache = new HashMap<>();
     /**
      * Get the corpus config (as returned from blacklab-server), if this is a valid corpus
      *
      * @param corpus name of the corpus
      * @return the config
      */
-    public Pair<CorpusConfig, Exception> getCorpusConfig(Optional<String> corpus) {
-        synchronized (corpusConfigs) {
-            return corpus.map(c -> corpusConfigs.computeIfAbsent(c, __ -> {
-                // Contact blacklab-server for the config xml file
-                QueryServiceHandler handler = new QueryServiceHandler(getWebserviceUrl(c));
+    public Result<CorpusConfig, Exception> getCorpusConfig(Optional<String> corpus, HttpServletRequest request, HttpServletResponse response) {
+        // Should only cache when not using authorization, otherwise result may be different across different requests.
+        // Also disable caching for user-corpora, as access permissions may change.
 
-                try {
-                    Map<String, String[]> params = new HashMap<>();
-                    getCorpusOwner(corpus).ifPresent(owner -> params.put("userid", new String[] {owner}));
-
-                    params.put("outputformat", new String[] {"xml"});
-                    String xmlConfig = handler.makeRequest(params); // get initial index data
-                    String listValuesFor = CorpusConfig.getAnnotationsWithRequiredValues(xmlConfig); // extract annotations that we need all values for
-
-                    params.put("outputformat", new String[] { "json" });
-                    params.put("listvalues", new String[] { listValuesFor });
-                    String jsonResult = handler.makeRequest(params); // again get index data, this time with those values included, in json format (used by the frontend code)
-
-                    // and store the config
-                    return Pair.of(new CorpusConfig(c, xmlConfig, jsonResult), null);
-                } catch (QueryException | IOException | SAXException | ParserConfigurationException e) {
-                    return Pair.of(null, e);
-                }
-            })).orElse(Pair.of(null, null));
-        }
+        // Contact blacklab-server for the config xml file if we have a corpus
+        Function<String, Result<CorpusConfig, Exception>> gen = c -> new BlackLabApi(request, response, this.config).getCorpusConfig(c);
+        return Result
+                .from(corpus)
+                .flatMap(c -> useCache(request) ? configCache.computeIfAbsent(c, gen) : gen.apply(c))
+                .orError(() -> new FileNotFoundException("No corpus specified"));
     }
 
     @Override
@@ -388,12 +234,12 @@ public class MainServlet extends HttpServlet {
         try {
             request.setCharacterEncoding("utf-8");
         } catch (UnsupportedEncodingException ex) {
-            logger.warn(ex.getMessage(), ex);
+            logger.log(Level.WARNING, "Failed to set utf-8 encoding on request", ex);
         }
 
         /*
          * Map in the following way:
-         * when the full uri contains at least 2 parts after the root (such as <root>/zeebrieven/search)
+         * when the full uri contains at least 2 parts after the root (such as <root>/some_corpus/search)
          * treat the first of those parts as the corpus, the second as the response to send,
          * and everything after that as arguments to build the response.
          * When only one part is present (such as <root>/help) treat the first part as the response to send.
@@ -403,20 +249,12 @@ public class MainServlet extends HttpServlet {
          * For instance <root>/help/searching would try to serve the nonexistant "searching" response in the context of the corpus "help"
          */
         // First strip out any leading items like "/" and our root
-        String requestUri = request.getRequestURI();
-        if (requestUri.startsWith(contextPath)) {
-            requestUri = requestUri.substring(contextPath.length());
-        }
+        // (use the actual contextpath here, since we're already behind any proxy.
+        String requestUri = StringUtils.substringAfter(request.getRequestURI(), request.getContextPath());
 
         // Use apache stringutils split as it's much more sensible about omitting leading/trailing and empty strings.
         List<String> pathParts = Arrays.stream(StringUtils.split(requestUri, '/'))
-            .map(s -> {
-                try {
-                    return URLDecoder.decode(s, StandardCharsets.UTF_8.name());
-                } catch (UnsupportedEncodingException e) {
-                    throw new IllegalStateException(e);
-                }
-            })
+            .map(s -> URLDecoder.decode(s, StandardCharsets.UTF_8))
             .collect(Collectors.toList());
 
         String corpus = null;
@@ -429,7 +267,7 @@ public class MainServlet extends HttpServlet {
         } else { // pathParts.size() >= 2 ... <corpus>/<page>/...
             corpus = pathParts.get(0);
             page = pathParts.get(1);
-            if (corpus.equals(adminProps.getProperty(PROP_DATA_DEFAULT)))
+            if (corpus.equals(config.get(Keys.DEFAULT_CORPUS_CONFIG)))
                 corpus = null;
         }
 
@@ -438,9 +276,9 @@ public class MainServlet extends HttpServlet {
         // If requesting invalid page, redirect to ${page}/search/, as the user probably meant to go to ${corpus}/search/ but instead went to ${corpus}/
         // if they actually meant a page, the corpus probably doesn't exist, they will still get a 404 as usual
         if (brClass.equals(ErrorResponse.class) && page != null && corpus == null) {
-            logger.debug("Unknown raw page {} requested - might be a corpus, redirecting", page);
+            logger.fine(String.format("Unknown page '%s' requested - might be a corpus, redirecting to search page", page));
             response.setStatus(HttpServletResponse.SC_MOVED_PERMANENTLY);
-            response.setHeader("location", this.getServletContext().getContextPath() + "/" + page + "/search/");
+            response.setHeader("location", this.config.get(Keys.CF_URL_ON_CLIENT) + "/" + page + "/search/");
             return;
         }
 
@@ -462,298 +300,105 @@ public class MainServlet extends HttpServlet {
             return;
         }
 
-        br.init(request, response, this, Optional.ofNullable(corpus), pathParameters);
         try {
-            br.completeRequest();
+            try {
+                br.init(request, response, this, Optional.ofNullable(corpus), pathParameters);
+                br.completeRequest();
+            } catch (QueryException e ) {
+                if (e.getHttpStatusCode() != HttpServletResponse.SC_OK) {
+                    response.sendError(e.getHttpStatusCode(), e.getMessage());
+                } else {
+                    response.getWriter().write(e.getMessage());
+              }
+            } catch (ReturnToClientException e) {
+                if (e.getCode() != HttpServletResponse.SC_OK)
+                    response.sendError(e.getCode(), e.getMessage());
+                else if (e.getMessage() != null)
+                    response.getWriter().write(e.getMessage());
+            }
         } catch (IOException e) {
             throw new ServletException(e);
         }
     }
 
     /**
-     * Get a file from the directory belonging to this corpus and return it, attempting to get a default if that fails.
-     * User corpora never have their own directory, and so will only use the locations for the defaults.
-     *
      * <pre>
-     * Tries in several locations:
-     * - First try PROP_DATA_PATH/corpus/ directory (if configured, and this is not a user corpus)
-     * - Then try PROP_DATA_PATH/PROP_DATA_DEFAULT directory (if configured)
-     * - Finally try WEB-INF/interface-default
-     * </pre>
-     *
-     * @param corpus - corpus for which to get the file. If null or a user-defined corpus only the default locations are
-     *        checked.
-     * @param filePath - path to the file relative to the directory for the corpus.
-     * @return the file, if found
-     */
-    public final Optional<File> getProjectFile(Optional<String> corpus, String filePath) {
-        Optional<Path> dataDir = getIfValid(adminProps.getProperty(PROP_DATA_PATH));
-
-        // Path the file in the corpus' data directory, only when a valid non-user corpus
-        Optional<Path> corpusFile = dataDir
-            .filter(path -> !isUserCorpus(corpus))
-            .flatMap(p -> resolveIfValid(p, corpus))
-            .flatMap(p -> resolveIfValid(p, Optional.of(filePath)));
-
-        // Path to the file in the default data directory, always available if configured correctly
-        // see https://github.com/INL/corpus-frontend/pull/69
-        Optional<Path> corpusFileDefault = dataDir
-            .flatMap(p -> resolveIfValid(p, Optional.of(adminProps.getProperty(PROP_DATA_DEFAULT))))
-            .flatMap(p -> resolveIfValid(p, Optional.of(filePath)));
-
-        File file = Stream.of(corpusFile, corpusFileDefault)
-            .map(o -> o.map(Path::toFile).orElse(null))
-            .filter(f -> f != null && f.exists() && f.canRead() && f.isFile())
-            .findFirst()
-            .orElseGet(() -> {
-                // both the regular data directories didn't contain the file (or aren't configured, etc),
-                // as a last resort, find a fallback file in the the jar directly
-                try {
-                    URL fileInJar = MainServlet.class.getResource("/interface-default/" + filePath);
-                    return fileInJar != null ? new File(fileInJar.toURI()) : null;
-                } catch (URISyntaxException e) {
-                    return null;
-                }
-            });
-
-        return Optional.ofNullable(file);
-    }
-
-    private static Optional<Path> getIfValid(String path) {
-        if (path == null || path.isEmpty())
-            return Optional.empty();
-
-        try {
-            return Optional.of(Paths.get(path));
-        } catch (InvalidPathException e) {
-            return Optional.empty();
-        }
-    }
-
-    /**
-     * Resolve the child again the parent and verify that the child is indeed a descendant.
-     * Also handle null, illegal paths, empty strings and other such things.
-     *
-     * @param parent
-     * @param child
-     * @return the new path if everything is alright
-     */
-    private static Optional<Path> resolveIfValid(Path parent, Optional<String> child) {
-        try {
-            return Optional.of(parent.resolve(child.get())).filter(resolved -> resolved.startsWith(parent) && !resolved.equals(parent)); // prevent upward directory traversal - child must be in parent
-        } catch (Exception e) { // catch anything, a bit lazy but allows passing in null and empty strings etc
-            return Optional.empty();
-        }
-    }
-
-    /**
      * Get the stylesheet to convert a document or its metadata from this corpus into
-     * an html snippet suitable for inserting in the article.vm page.
+     * an HTML snippet suitable for inserting in the article.vm page.
      *
      * First attempts to find file "${name}.xsl" in all locations, then,
      * as a fallback, attempts to find "${name}_${corpusDataFormat}.xsl" in all locations.
      * The data format suffix is supported to allow placing xsl files for all corpora in the same fallback directory.
      *
      * "meta.xsl" is used to transform the document's metadata, "article.xsl" for the content.
-     * see {@link ArticleResponse#completeRequest()}
+     * See {@link ArticleResponse}.
      *
      * Looks for a file by the name of "article_corpusDataFormat.xsl", so "article_tei" for tei, etc.
      * Separate xslt is used for metadata,
      *
-     * <pre>
      * First tries retrieving the file using {@link #getProjectFile(Optional, String)}
      * If that fails, tries contacting blacklab-server for an autogenerated best-effort xsl file.
      *  - Note that this only returns something corpusDataFormat describes XML-based documents.
-     * </pre>
      *
      * NOTE: We don't generate a generic fallback xslt here on purpose.
      * If we did, we'd have to inspect all documents we want to transform to see if they're actually XML,
      * since we'd return the default xslt even when blacklab returns 404 because the format isn't xml-based.
      * If we instead return empty optional when this happens, then we only need to inspect documents for which we can't get
      * a transformer, and can easily tell if they're xml documents or some other document/file type.
-     *
-     * @param corpus
+     * </pre>
      * @param name - the name of the file, excluding extension
      * @param corpusDataFormat - optional name suffix to differentiate files for different formats
      * @return the xsl transformer to use for transformation, note that this is always the same transformer.
      */
-    public Pair<Optional<XslTransformer>, Optional<Exception>> getStylesheet(String corpus, String name, Optional<String> corpusDataFormat) {
+    public Result<XslTransformer, TransformerException> getStylesheet(Optional<String> corpus, String name, Optional<String> corpusDataFormat, HttpServletRequest request, HttpServletResponse response) {
+        String dataDir = config.get(Keys.CORPUS_CONFIG_DIR);
+        Optional<String> fallbackCorpus = Optional.ofNullable(config.get(Keys.DEFAULT_CORPUS_CONFIG)).filter(s -> !s.isEmpty());
 
-        // @formatter:off
-        Function<String, Pair<Optional<XslTransformer>, Optional<Exception>>> gen = __ -> {
-            Optional<File> file = Stream.of(
-                getProjectFile(Optional.of(corpus), name + ".xsl").orElse(null),
-                corpusDataFormat.flatMap(f -> getProjectFile(Optional.of(corpus), name + "_" + f +".xsl")).orElse(null)
-            )
-            .filter(Objects::nonNull)
-            .findFirst();
-
-            // File found - try loading it
-            if (file.isPresent()) {
-                try {
-                    XslTransformer trans = new XslTransformer(file.get());
-                    return Pair.of(Optional.of(trans), Optional.empty());
-                 } catch (TransformerException | FileNotFoundException e) {
-                     logger.info("Error loading stylesheet {} for corpus {} : {}", file.get(), corpus, e.getMessage());
-                     return Pair.of(Optional.empty(), Optional.of(e));
-                 }
-            }
-
-
-            // alright, file not found. Try getting from BlackLab and parse that
-            if (name.equals("article") && corpusDataFormat.isPresent()) try { // for article files, we can use a fallback if there is no template file
-                logger.info("Attempting to get xsl {} for corpus {} from blacklab...", corpusDataFormat.get(), corpus);
-
-                final QueryServiceHandler handler = new QueryServiceHandler(getWebserviceUrl(null) + "input-formats/" + URLEncoder.encode(corpusDataFormat.get(), StandardCharsets.UTF_8.toString()) + "/xslt");
-                final String sheet = handler.makeRequest(new HashMap<>());
-                return Pair.of(Optional.of(new XslTransformer(sheet, new StringReader(sheet))), Optional.empty());
-            } catch (TransformerException | IOException e)  {
-                logger.info("Error getting or using stylesheet for format {} from blacklab : {}", corpusDataFormat, e.getMessage());
-                return Pair.of(Optional.empty(), Optional.of(e));
-            } catch (QueryException e) {
-                logger.info("Error getting stylesheet for format {} from blacklab, the format might not exist (http {}).", corpusDataFormat, e.getHttpStatusCode());
-                return Pair.of(Optional.empty(), Optional.of(e));
-            }
-
-            return Pair.of(Optional.empty(), Optional.empty());
-        };
-        // @formatter:on
+        Function<String, Result<XslTransformer, TransformerException>> gen = __ -> CorpusFileUtil.getStylesheet(dataDir, corpus, fallbackCorpus, name, corpusDataFormat, request, response, this.config);
 
         // need to use corpus name in the cache map
         // because corpora can define their own xsl files in their own data directory
         String key = corpus + "_" + corpusDataFormat.orElse("missing-format") + "_" + name;
-        return this.useCache() ? articleTransformers.computeIfAbsent(key, gen) : gen.apply(key);
+        return this.useCache(request) ? articleTransformers.computeIfAbsent(key, gen) : gen.apply(key);
+    }
+
+    public Optional<File> getProjectFile(Optional<String> corpus, String file) {
+        return CorpusFileUtil.getProjectFile(
+                config.get(Keys.CORPUS_CONFIG_DIR),
+                corpus,
+                Optional.ofNullable(config.get(Keys.DEFAULT_CORPUS_CONFIG)),
+                Optional.of(file));
     }
 
     public InputStream getHelpPage(Optional<String> corpus) {
-        try {
-            return new FileInputStream(getProjectFile(corpus, "help.inc").get());
-        } catch (FileNotFoundException e) {
-            throw new IllegalStateException(e); // this file always exists
-        }
+        return Result.from(getProjectFile(corpus, "help.inc"))
+                .mapWithErrorHandling(FileInputStream::new)
+                .getOrThrow(IllegalStateException::new); // this file always exists (at least the fallback in our own jar)
     }
 
     public InputStream getAboutPage(Optional<String> corpus) {
-        try {
-            return new FileInputStream(getProjectFile(corpus, "about.inc").get());
-        } catch (FileNotFoundException e) {
-            throw new IllegalStateException(e); // this file always exists
-        }
+        return Result.from(getProjectFile(corpus, "about.inc"))
+                .mapWithErrorHandling(FileInputStream::new)
+                .getOrThrow(IllegalStateException::new); // this file always exists (at least the fallback in our own jar)
     }
 
     /**
-     * Get the url to blacklab-server for this corpus. The url will always end
-     * in "/"
-     *
-     * @param corpus the corpus for which to generate the url, if null, the base
-     *        blacklab-server url will be returned.
-     * @return the url
+     * Check whether caching of things is enabled.
+     * @param request if supplied, check if the request contains authentication parameters (according to AUTH_SOURCE_NAME and AUTH_SOURCE_TYPE), and return false if it does.
+     *                If not supplied, check if the global config allows caching.
+     * @return whether the use the cache for this request
      */
-    public String getWebserviceUrl(String corpus) {
-        String url = adminProps.getProperty(PROP_BLS_SERVERSIDE);
-        if (!url.endsWith("/")) {
-            url += "/";
-        }
-
-        if (corpus != null && !corpus.isEmpty()) {
-            url += corpus + "/";
-        }
-        return url;
+    public boolean useCache(HttpServletRequest request) {
+        Optional<String> auth = Optional.ofNullable(request).flatMap(r -> BlackLabApi.readRequestParameter(r, config.get(Keys.AUTH_SOURCE_TYPE), config.get(Keys.AUTH_SOURCE_NAME)));
+        return Boolean.parseBoolean(this.config.get(Keys.CACHE)) && auth.isEmpty();
     }
 
-    /** NOTE: never suffixed with corpus id, to unify behavior on different pages. The url will always end in "/" */
-    public String getExternalWebserviceUrl() {
-        String url = adminProps.getProperty(PROP_BLS_CLIENTSIDE);
-        if (!url.endsWith("/")) {
-            url += "/";
-        }
-        return url;
-    }
-
-    public Optional<String> getBannerMessage() {
-        return Optional.ofNullable(StringUtils.trimToNull(this.adminProps.getProperty(PROP_BANNER_MESSAGE)));
-    }
-
-    public boolean useCache() {
-        return Boolean.parseBoolean(this.adminProps.getProperty(PROP_CACHE));
-    }
-    
     /** Render debug info checkbox in the search interface? */
     public boolean debugInfo() {
-        return Boolean.parseBoolean(this.adminProps.getProperty(PROP_DEBUG_CHECKBOX_VISIBLE));
+        return Boolean.parseBoolean(this.config.get(Keys.SHOW_DEBUG_CHECKBOX_ON_CLIENT));
     }
 
-    /**
-     * Return a timestamp for when the application was built.
-     *
-     * @return build timestamp (format: yyyy-MM-dd HH:mm:ss), or UNKNOWN if the
-     *         timestamp could not be found for some reason (i.e. not running from a
-     *         JAR, or JAR was not created with the Ant buildscript).
-     */
-    public String getWarBuildTime() {
-        if (warBuildTime != null)
-            return warBuildTime;
-
-        try (InputStream inputStream = getServletContext().getResourceAsStream("/META-INF/MANIFEST.MF")) {
-            return warBuildTime = Optional.ofNullable(inputStream)
-                .map(is -> {
-                    try {
-                        return new Manifest(is);
-                    } catch (IOException e) {
-                        return null;
-                    }
-                })
-                .map(Manifest::getMainAttributes)
-                .map(a -> a.getValue("Build-Time"))
-                .filter(s -> !s.isEmpty())
-                .orElse("UNKNOWN");
-        } catch (IOException e) {
-            return warBuildTime = "UNKNOWN";
-        }
-    }
-
-    public Properties getAdminProps() {
-        return adminProps;
-    }
-
-    /**
-     *
-     * @param url
-     * @param request used to get the path for the current page
-     * @return relativized url
-     */
-    public static String getRelativeUrl(String url, HttpServletRequest request) {
-        String fromUrl = request.getServletPath();
-        boolean trailingSegment = fromUrl.endsWith("/"); // when source url does not end in '/' we need to do one less '../'
-
-        String[] from = StringUtils.split(fromUrl, "/");
-        String[] to = StringUtils.split(url, "/");
-
-        int i = 0;
-        while (i < from.length && i < to.length && from[i].equals(to[i]))
-            ++i;
-
-        List<String> parts = new ArrayList<>();
-        parts.add("."); // handle the case of empty urls
-
-        for (int j = i; j < from.length - (trailingSegment ? 0 : 1); ++j)
-            parts.add("..");
-
-        for (int j = i; j < to.length; ++j)
-            parts.add(to[j]);
-
-        return StringUtils.join(parts, "/");
-    }
-
-    public static boolean isUserCorpus(Optional<String> corpus) {
-        return getCorpusOwner(corpus).isPresent();
-    }
-
-    public static Optional<String> getCorpusName(Optional<String> corpus) {
-        return corpus.map(id -> id.substring(Math.max(0, id.indexOf(':'))));
-    }
-
-    public static Optional<String> getCorpusOwner(Optional<String> corpus) {
-        return corpus.map(id -> { int i = id.indexOf(':'); return i != -1 ? id.substring(0, i) : null; });
+    public GlobalConfig getGlobalConfig() {
+        return config;
     }
 }

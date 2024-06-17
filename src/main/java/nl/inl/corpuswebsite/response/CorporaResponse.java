@@ -14,13 +14,7 @@ import nl.inl.corpuswebsite.MainServlet;
 public class CorporaResponse extends BaseResponse {
 
     public CorporaResponse() {
-        super(false);
-    }
-
-    @Override
-    public void init(HttpServletRequest request, HttpServletResponse response, MainServlet servlet, Optional<String> corpus, List<String> pathParameters)
-        throws ServletException {
-        super.init(request, response, servlet, corpus, pathParameters);
+        super("corpora", false);
     }
 
     @Override

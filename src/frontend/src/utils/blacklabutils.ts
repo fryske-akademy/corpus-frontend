@@ -1,4 +1,4 @@
-import {NormalizedIndex, NormalizedAnnotation, NormalizedAnnotatedField, NormalizedMetadataField, NormalizedIndexOld, NormalizedFormatOld, NormalizedMetadataGroup, NormalizedAnnotationGroup} from '@/types/apptypes';
+import {NormalizedIndex, NormalizedAnnotation, NormalizedAnnotatedField, NormalizedMetadataField, NormalizedFormat, NormalizedMetadataGroup, NormalizedAnnotationGroup, NormalizedIndexBase} from '@/types/apptypes';
 import * as BLTypes from '@/types/blacklabtypes';
 import { mapReduce } from '@/utils';
 
@@ -28,7 +28,7 @@ function normalizeMetadataUIType(field: BLTypes.BLMetadataField): NormalizedMeta
 		case 'checkbox':
 		case 'radio':
 			return field.valueListComplete ? uiType : 'combobox';
-		case 'date': 
+		case 'date':
 			return 'date';
 		default: return 'text';
 	}
@@ -112,57 +112,59 @@ function normalizeAnnotatedField(field: BLTypes.BLAnnotatedField): NormalizedAnn
 
 function normalizeAnnotationGroups(blIndex: BLTypes.BLIndexMetadata): NormalizedAnnotationGroup[] {
 	let annotationGroupsNormalized: NormalizedAnnotationGroup[] = [];
-	for (const [fieldId, field] of Object.entries(BLTypes.isIndexMetadataV1(blIndex) ? blIndex.complexFields : blIndex.annotatedFields) as Array<[string, BLTypes.BLAnnotatedField]>) {
-		const annotations = BLTypes.isAnnotatedFieldV1(field) ? field.properties : field.annotations;
-		const idsNotInGroups = new Set(Object.keys(annotations));
+	const fieldId = blIndex.mainAnnotatedField;
+	const field = blIndex.annotatedFields[fieldId];
 
-		let hasUserDefinedGroup = false;
+	const annotations = BLTypes.isAnnotatedFieldV1(field) ? field.properties : field.annotations;
+	const idsNotInGroups = new Set(Object.keys(annotations));
 
-		// Copy all predefined groups, removing nonexistant annotations and groups
-		if (blIndex.annotationGroups && blIndex.annotationGroups[fieldId]) {
-			for (const group of blIndex.annotationGroups[fieldId]) {
-				const normalizedGroup: NormalizedAnnotationGroup = {
-					annotatedFieldId: fieldId,
-					id: group.name,
-					entries: group.annotations.filter(id => annotations[id] != null),
-					isRemainderGroup: false
-				};
-				if (normalizedGroup.entries.length) {
-					annotationGroupsNormalized.push(normalizedGroup);
-					normalizedGroup.entries.forEach(id => idsNotInGroups.delete(id));
-					hasUserDefinedGroup = true;
-				}
-			}
-		}
+	let hasUserDefinedGroup = false;
 
-		// Add all remaining annotations to the remainder group.
-		// First add all explicitly ordered annotations (annotatedField.displayOrder).
-		// Finally add everything else at the end, sorted by their displayNames.
-		if (idsNotInGroups.size) {
-			const remainingAnnotationsToAdd = new Set(idsNotInGroups);
-			const idsInRemainderGroup: string[] = [];
-
-			// annotations in displayOrder
-			if (!BLTypes.isAnnotatedFieldV1(field) && field.displayOrder) {
-				field.displayOrder.forEach(id => {
-					if (remainingAnnotationsToAdd.has(id)) {
-						remainingAnnotationsToAdd.delete(id);
-						idsInRemainderGroup.push(id);
-					}
-				});
-			}
-			// Finally all annotations without entry in displayOrder
-			idsInRemainderGroup.push(...[...remainingAnnotationsToAdd].sort((a, b) => annotations[a].displayName.localeCompare(annotations[b].displayName)));
-			// And create the group.
-			annotationGroupsNormalized.push({
+	// Copy all predefined groups, removing nonexistant annotations and groups
+	if (blIndex.annotationGroups && blIndex.annotationGroups[fieldId]) {
+		for (const group of blIndex.annotationGroups[fieldId]) {
+			const normalizedGroup: NormalizedAnnotationGroup = {
 				annotatedFieldId: fieldId,
-				entries: idsInRemainderGroup,
-				id: 'Other',
-				// If there was a group defined from the index config, this is indeed the remainder group, otherwise this is just a normal group.
-				isRemainderGroup: hasUserDefinedGroup
-			});
+				id: group.name,
+				entries: group.annotations.filter(id => annotations[id] != null),
+				isRemainderGroup: false
+			};
+			if (normalizedGroup.entries.length) {
+				annotationGroupsNormalized.push(normalizedGroup);
+				normalizedGroup.entries.forEach(id => idsNotInGroups.delete(id));
+				hasUserDefinedGroup = true;
+			}
 		}
 	}
+
+	// Add all remaining annotations to the remainder group.
+	// First add all explicitly ordered annotations (annotatedField.displayOrder).
+	// Finally add everything else at the end, sorted by their displayNames.
+	if (idsNotInGroups.size) {
+		const remainingAnnotationsToAdd = new Set(idsNotInGroups);
+		const idsInRemainderGroup: string[] = [];
+
+		// annotations in displayOrder
+		if (!BLTypes.isAnnotatedFieldV1(field) && field.displayOrder) {
+			field.displayOrder.forEach(id => {
+				if (remainingAnnotationsToAdd.has(id)) {
+					remainingAnnotationsToAdd.delete(id);
+					idsInRemainderGroup.push(id);
+				}
+			});
+		}
+		// Finally all annotations without entry in displayOrder
+		idsInRemainderGroup.push(...[...remainingAnnotationsToAdd].sort((a, b) => annotations[a].displayName.localeCompare(annotations[b].displayName)));
+		// And create the group.
+		annotationGroupsNormalized.push({
+			annotatedFieldId: fieldId,
+			entries: idsInRemainderGroup,
+			id: 'Other',
+			// If there was a group defined from the index config, this is indeed the remainder group, otherwise this is just a normal group.
+			isRemainderGroup: hasUserDefinedGroup
+		});
+	}
+
 	return annotationGroupsNormalized;
 }
 
@@ -200,10 +202,25 @@ function normalizeMetadataGroups(blIndex: BLTypes.BLIndexMetadata): NormalizedMe
 
 // -------------
 
-export function normalizeIndex(blIndex: BLTypes.BLIndexMetadata): NormalizedIndex {
+export function normalizeIndexBase(blIndex: BLTypes.BLIndex, id: string): NormalizedIndexBase {
+	return {
+		description: blIndex.description || "",
+		displayName: blIndex.displayName || id.split(':')[1] || id,
+		documentFormat: blIndex.documentFormat,
+		id,
+		indexProgress: blIndex.indexProgress || null,
+		owner: id.substring(0, id.indexOf(':')) || null,
+		status: blIndex.status,
+		timeModified: blIndex.timeModified,
+		tokenCount: blIndex.tokenCount || 0,
+		documentCount: blIndex.documentCount || 0
+	}
+}
+
+export function normalizeIndex(blIndex: BLTypes.BLIndexMetadata, relations: BLTypes.BLRelationInfo): NormalizedIndex {
 	const annotationGroupsNormalized = normalizeAnnotationGroups(blIndex);
 	const metadataGroupsNormalized = normalizeMetadataGroups(blIndex);
-	const annotatedFields: BLTypes.BLAnnotatedField[] = Object.values(BLTypes.isIndexMetadataV1(blIndex) ? blIndex.complexFields : blIndex.annotatedFields);
+	const annotatedFields: BLTypes.BLAnnotatedField[] = Object.values(blIndex.annotatedFields);
 
 	return {
 		annotatedFields: mapReduce(annotatedFields.map(normalizeAnnotatedField), 'id'),
@@ -214,52 +231,29 @@ export function normalizeIndex(blIndex: BLTypes.BLIndexMetadata): NormalizedInde
 		// If BlackLab is an old format, this property doesn't exist
 		// If BlackLab is new, and the property is still missing, it's 0 (tokenCount and documentCount are always omitted when 0)
 		// Encode this in the fallback value, then later request the actual number of documents
-		documentCount: !BLTypes.isIndexMetadataV1(blIndex) ? blIndex.documentCount || 0 : -1,
+		documentCount: blIndex.documentCount,
 		documentFormat: blIndex.documentFormat,
 		fieldInfo: blIndex.fieldInfo,
 		id: blIndex.indexName,
 		metadataFieldGroups: metadataGroupsNormalized,
 		metadataFields: mapReduce(Object.values(blIndex.metadataFields).map(normalizeMetadata), 'id'),
 		owner: blIndex.indexName.substring(0, blIndex.indexName.indexOf(':')) || null,
-		shortId: blIndex.indexName.substr(blIndex.indexName.indexOf(':') + 1),
 		textDirection: blIndex.textDirection,
 		timeModified: blIndex.versionInfo.timeModified,
-		tokenCount: blIndex.tokenCount || 0
+		tokenCount: blIndex.tokenCount || 0,
+		status: blIndex.status,
+		indexProgress: blIndex.indexProgress || null,
+		mainAnnotatedField: blIndex.mainAnnotatedField,
+		relations
 	};
 }
 
-// ----------------------------------------------------------
-// Old normalization functions, from corpora management page.
-// ----------------------------------------------------------
-
-// TODO merge the old and new NormalizedIndex types
-
-/**
- * Add some calculated properties to the index object (such as if it's a private index) and normalize some optional data to empty strings if missing.
- *
- * @param id full id of the index, including username portion (if applicable)
- * @param index the index json object as received from blacklab-server
- */
-export function normalizeIndexOld(id: string, index: BLTypes.BLIndex): NormalizedIndexOld {
-	return {
-		...index,
-
-		id,
-		owner: id.substring(0, id.indexOf(':')) || null,
-		shortId: id.substr(id.indexOf(':') + 1),
-
-		displayName: index.displayName || id.substr(id.indexOf(':') + 1),
-		documentFormat: index.documentFormat || null,
-		indexProgress: index.indexProgress || null,
-		tokenCount: index.tokenCount == null ? null : index.tokenCount,
-	};
-}
 
 /**
  * @param id - full id of the format, including userName portion (if applicable)
  * @param format as received from the server
  */
-export function normalizeFormatOld(id: string, format: BLTypes.BLFormat): NormalizedFormatOld {
+export function normalizeFormat(id: string, format: BLTypes.BLFormat): NormalizedFormat {
 	return {
 		...format,
 
@@ -273,9 +267,9 @@ export function normalizeFormatOld(id: string, format: BLTypes.BLFormat): Normal
 	};
 }
 
-export function normalizeFormatsOld(formats: BLTypes.BLFormats): NormalizedFormatOld[] {
+export function normalizeFormats(formats: BLTypes.BLFormats): NormalizedFormat[] {
 	return Object.entries(formats.supportedInputFormats)
-	.map(([key, value]) => normalizeFormatOld(key, value));
+	.map(([key, value]) => normalizeFormat(key, value));
 }
 
 // ---------------------------------------

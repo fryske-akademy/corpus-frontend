@@ -1,16 +1,16 @@
 <template>
 	<div>
-		<h3>Explore ...</h3>
+		<h3>{{$t('explore.heading')}}</h3>
 		<ul class="nav nav-tabs">
-			<li :class="{'active': exploreMode==='corpora'}"   @click.prevent="exploreMode='corpora'"><a href="#explore-corpora">Documents</a></li>
-			<li :class="{'active': exploreMode==='ngram'}"     @click.prevent="exploreMode='ngram'"><a href="#explore-n-grams">N-grams</a></li>
-			<li :class="{'active': exploreMode==='frequency'}" @click.prevent="exploreMode='frequency'"><a href="#explore-frequency">Statistics</a></li>
+			<li :class="{'active': exploreMode==='corpora'}"   @click.prevent="exploreMode='corpora'"><a href="#explore-corpora">{{$t('explore.corpora.heading')}}</a></li>
+			<li :class="{'active': exploreMode==='ngram'}"     @click.prevent="exploreMode='ngram'"><a href="#explore-n-grams">{{$t('explore.ngram.heading')}}</a></li>
+			<li :class="{'active': exploreMode==='frequency'}" @click.prevent="exploreMode='frequency'"><a href="#explore-frequency">{{$t('explore.frequency.heading')}}</a></li>
 		</ul>
 
 		<div class="tab-content">
 			<div id="explore-corpora" :class="['tab-pane form-horizontal', {'active': exploreMode==='corpora'}]">
 				<div class="form-group">
-					<label class="col-xs-4 col-md-2" for="corpora-group-by">Group documents by metadata</label>
+					<label class="col-xs-4 col-md-2" for="corpora-group-by">{{$t('explore.corpora.groupBy')}}</label>
 					<div class="col-xs-8">
 						<SelectPicker
 							placeholder="Group by..."
@@ -28,7 +28,7 @@
 					</div>
 				</div>
 				<div class="form-group">
-					<label class="col-xs-4 col-md-2" for="corpora-display-mode">Show groups as</label>
+					<label class="col-xs-4 col-md-2" for="corpora-display-mode">{{$t('explore.corpora.showAs')}}</label>
 					<div class="col-xs-8">
 						<SelectPicker
 							placeholder="Show as"
@@ -47,7 +47,7 @@
 			</div>
 			<div id="explore-n-grams" :class="['tab-pane form-horizontal', {'active': exploreMode==='ngram'}]">
 				<div class="form-group">
-					<label class="col-xs-4 col-md-2" for="n-gram-size">N-gram size</label>
+					<label class="col-xs-4 col-md-2" for="n-gram-size">{{$t('explore.ngram.ngramSize')}}</label>
 					<div class="col-xs-8 col-md-5">
 						<input
 							class="form-control"
@@ -63,7 +63,7 @@
 					</div>
 				</div>
 				<div class="form-group">
-					<label class="col-xs-4 col-md-2" for="n-gram-type">N-gram type</label>
+					<label class="col-xs-4 col-md-2" for="n-gram-type">{{$t('explore.ngram.ngramType')}}</label>
 
 					<div class="col-xs-8 col-md-5">
 						<SelectPicker
@@ -138,7 +138,7 @@
 			</div>
 			<div id="explore-frequency" :class="['tab-pane form-horizontal', {'active': exploreMode==='frequency'}]">
 				<div class="form-group form-group-lg" style="margin: 0;">
-					<label for="frequency-type" class="control-label">Frequency list type</label>
+					<label for="frequency-type" class="control-label">{{$t('explore.frequency.frequencyType')}}</label>
 					<SelectPicker
 						data-id="frequency-type"
 						data-name="frequency-type"
@@ -168,7 +168,7 @@ import SelectPicker, {Option, OptGroup} from '@/components/SelectPicker.vue';
 import Autocomplete from '@/components/Autocomplete.vue';
 import Lexicon from '@/pages/search/form/Lexicon.vue';
 import { getAnnotationSubset, getMetadataSubset } from '@/utils';
-import { paths } from '@/api';
+import { blacklabPaths } from '@/api';
 
 import debug from '@/utils/debug';
 
@@ -226,7 +226,7 @@ export default Vue.extend({
 				CorpusStore.get.annotationGroups(),
 				CorpusStore.get.allAnnotationsMap(),
 				'Search',
-				CorpusStore.getState().textDirection
+				CorpusStore.get.textDirection()
 			);
 			return optGroups.length > 1 ? optGroups : optGroups.flatMap(g => g.options as Option[]);
 		},
@@ -236,17 +236,25 @@ export default Vue.extend({
 				CorpusStore.get.annotationGroups(),
 				CorpusStore.get.allAnnotationsMap(),
 				'Search', // we don't want the before hit/after hit context options, just do search mode, it'll be fine
-				CorpusStore.getState().textDirection
+				CorpusStore.get.textDirection()
 			);
 			return optGroups.length > 1 ? optGroups : optGroups.flatMap(g => g.options as Option[]);
 		},
 		metadataGroupByOptions(): OptGroup[] {
+			// we removed the field:prefix from metadata grouping options
+			// since the new groupby window. so we need to fix this here
+			function fix(o: OptGroup|Option) {
+				if ('value' in o) {o.value = 'field:'+o.value;}
+				else o.options.forEach(opt => {if (!(typeof opt === 'string')) fix(opt);});
+			}
+
 			const optGroups = getMetadataSubset(
 				UIStore.getState().results.shared.groupMetadataIds,
 				CorpusStore.get.metadataGroups(),
 				CorpusStore.get.allMetadataFieldsMap(),
 				'Group'
 			);
+			optGroups.forEach(fix);
 			return optGroups;
 		},
 		corporaGroupDisplayModeOptions(): string[] {
@@ -270,7 +278,7 @@ export default Vue.extend({
 			});
 		},
 		autocompleteUrl(annot: CorpusStore.NormalizedAnnotation) {
-			return paths.autocompleteAnnotation(CorpusStore.getState().id, annot.annotatedFieldId, annot.id);
+			return blacklabPaths.autocompleteAnnotation(INDEX_ID, annot.annotatedFieldId, annot.id);
 		}
 	},
 	created() {

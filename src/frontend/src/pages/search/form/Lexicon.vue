@@ -19,17 +19,17 @@
 				type="button"
 				class="btn btn-default"
 				:disabled="selectedWords.length === renderedWords.length"
-				@click="renderedWords.forEach(w => w.selected = w.count > 0)">Select all
+				@click="renderedWords.forEach(w => w.selected = w.count > 0)">{{$t('lexicon.selectAll')}}
 			</button>
 			<button
 				type="button"
 				class="btn btn-default"
 				:disabled="!selectedWords.length"
-				@click="renderedWords.forEach(w => w.selected = false)">Deselect all
+				@click="renderedWords.forEach(w => w.selected = false)">{{$t('lexicon.deselectAll')}}
 			</button>
 		</div>
 
-		<label v-for="opt in renderedWords" :key="opt.id"
+		<label v-for="opt in renderedWords" :key="opt.word"
 			style="width: 10vw; min-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
 			:role="opt.count > 0 ? 'button' : undefined"
 			:class="{'disabled': opt.count === 0}"
@@ -43,7 +43,7 @@
 			> {{opt.word}}<!-- ({{opt.count}})-->
 		</label>
 		<template v-if="wordOptions && wordOptions.length"> <!-- if we have wordOptions, we also have pos options -->
-			<h4>Limit to Part of Speech</h4>
+			<h4>{{$t('lexicon.limit')}}</h4>
 			<label v-for="(checked, pos) in posOptions" :key="pos"
 				style="width: 10vw; min-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
 				role="button"
@@ -68,7 +68,7 @@ import * as UIStore from '@/store/search/ui';
 import * as api from '@/api';
 import SelectPicker, { Option } from '@/components/SelectPicker.vue';
 import UID from '@/mixins/uid';
-import { escapeRegex, filterDuplicates, MapOf, mapReduce, getAnnotationPatternString } from '@/utils';
+import { escapeRegex, filterDuplicates, mapReduce, getAnnotationPatternString } from '@/utils';
 
 type LexiconParams1 = {lemma: string}|{wordform: string}
 type LexiconParams = LexiconParams1&{
@@ -123,13 +123,13 @@ type WordOption = {
 };
 
 export default Vue.extend({
-	mixins: [UID],
+	mixins: [UID] as any,
 	components: { SelectPicker },
 	inheritAttrs: false,
 	props: {
 		annotationId: String,
 		value: null as any as () => null|string,
-		definition: Object as () => any
+		definition: Object as () => CorpusStore.NormalizedAnnotation
 	},
 	data: () => ({
 		input$: new Observable.BehaviorSubject<string>(''),
@@ -137,7 +137,7 @@ export default Vue.extend({
 
 		wordOptions: [] as null|WordOption[],
 
-		posOptions: {} as MapOf<boolean>,
+		posOptions: {} as Record<string, boolean>,
 
 		displayValue: '',
 	}),
@@ -160,7 +160,7 @@ export default Vue.extend({
 	},
 	created() {
 		const isValidWord = /^[\w]+$/;
-		const emptyResult = {posOptions: {} as MapOf<boolean>, wordList: [] as WordOption[]};
+		const emptyResult = {posOptions: {} as Record<string, boolean>, wordList: [] as WordOption[]};
 
 		// don't ever do anything (clear or search...) while a suggestion is selected, also not when search term is emptied (such as when deselecting all suggestions)
 		const filteredInput$ = this.input$.pipe(filter(v => !this.selectedWords.length && !!v));
@@ -209,9 +209,9 @@ export default Vue.extend({
 						lemmata.forEach(l => l.pos = `${l.lemma} (${l.pos || 'unknown'})`);
 
 						// Request occurance counts in the corpus from blacklab. Note we also request occurance count for the entered search term.
-						const {termFreq: frequencies} = await api.blacklab.getTermFrequencies(CorpusStore.getState().id, this.annotationId, lemmata.flatMap(r => r.wordforms).concat(term));
+						const {termFreq: frequencies} = await api.blacklab.getTermFrequencies(INDEX_ID, this.annotationId, lemmata.flatMap(r => r.wordforms).concat(term));
 
-						const options: MapOf<WordOption> = {};
+						const options: Record<string, WordOption> = {};
 						lemmata.forEach(({pos, wordforms, lemma}) => {
 							wordforms.forEach((word, i) => {
 								options[word] = options[word] || {

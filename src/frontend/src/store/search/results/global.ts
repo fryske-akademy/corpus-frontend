@@ -18,7 +18,8 @@ type ModuleRootState = {
 	sampleMode: 'percentage'|'count';
 	sampleSeed: number|null;
 	sampleSize: number|null;
-	wordsAroundHit: number|null;
+	/** context can be a string or number in BlackLab, but for now in the form we only allow numbers. */
+	context: number|string|null;
 };
 
 const initialState: ModuleRootState = {
@@ -26,16 +27,13 @@ const initialState: ModuleRootState = {
 	sampleMode: defaults.sampleMode,
 	sampleSeed: null,
 	sampleSize: null,
-	wordsAroundHit: null
+	context: null,
 };
 
 const b = getStoreBuilder<RootState>().module<ModuleRootState>(namespace, Object.assign({}, initialState));
 
 const getState = b.state();
-
-const get = {
-
-};
+const get = {}; //nothing for now.
 
 const actions = {
 	pageSize: b.commit((state, payload: number) => {
@@ -74,7 +72,7 @@ const actions = {
 		}
 
 	}, 'samplesize'),
-	wordsAroundHit: b.commit((state, payload: number|null) => state.wordsAroundHit = payload, 'wordsaroundhit'),
+	context: b.commit((state, payload: number|string|null) => state.context = payload, 'context'),
 
 	reset: b.commit(state => Object.assign(state, initialState), 'reset'),
 	replace: b.commit((state, payload: ModuleRootState) => {
@@ -83,7 +81,7 @@ const actions = {
 		actions.sampleMode(payload.sampleMode);
 		actions.sampleSeed(payload.sampleSeed);
 		actions.sampleSize(payload.sampleSize);
-		actions.wordsAroundHit(payload.wordsAroundHit);
+		actions.context(payload.context);
 	}, 'replace'),
 };
 
@@ -91,6 +89,7 @@ const actions = {
 const init = () => {/**/};
 
 export {
+	ModuleRootState as ExternalModuleRootState,
 	ModuleRootState,
 
 	getState,

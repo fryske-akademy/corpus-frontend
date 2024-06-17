@@ -1,156 +1,86 @@
 <template>
-	<div v-show="visible" class="results-container" :disabled="request">
-		<span v-if="request" class="fa fa-spinner fa-spin searchIndicator" style="position:absolute; left: 50%; top:15px"></span>
+	<div class="results-container" :disabled="request" :style="{minHeight: request ? '100px' : undefined}">
 
-		<div class="crumbs-totals">
-			<ol class="breadcrumb resultscrumb">
-				<!-- no disabled state; use active class instead... -->
-				<li v-for="(crumb, index) in breadCrumbs" :key="index" :class="{'active': crumb.active || !!request}">
-					<a v-if="!crumb.active && !request"
-						role="button"
-						:title="crumb.title"
-						:disabled="request"
-						:class="request ? 'disabled' : undefined"
-						@click.prevent="!request && crumb.onClick ? crumb.onClick() : undefined"
-					>{{crumb.label}}</a>
-					<template v-else>{{crumb.label}}</template>
-				</li>
-			</ol>
+		<Spinner v-if="request" overlay size="75"/>
 
-			<Totals v-if="results"
+		<!-- i.e. HitResults, DocResults, GroupResults -->
+		<component v-if="resultsHaveData"
+			:is="resultComponentName"
+			v-bind="resultComponentData"
+
+			@sort="sort = $event"
+			@viewgroup="restoreOnViewGroupLeave = {page, sort}; viewGroup = $event.id; _viewGroupName = $event.displayName;"
+		>
+			<BreadCrumbs slot="breadcrumbs"
+				:crumbs="breadCrumbs"
+				:disabled="!!request"
+			/>
+
+			<Totals slot="totals"
 				class="result-totals"
 				:initialResults="results"
-				:type="type"
+				:type="id"
 				:indexId="indexId"
 
 				@update="paginationResults = $event"
 			/>
-		</div>
 
-		<template v-if="resultsHaveData">
-			<component
-				:is="resultComponentName"
-				v-bind="resultComponentData"
+			<GroupBy slot="groupBy" v-if="!viewGroup"
+				:type="id"
+				:results="results"
+				:disabled="!!request"
+				@viewgroupLeave="leaveViewgroup"
+			/>
+			<button v-else slot="groupBy" class="btn btn-sm btn-primary" @click="leaveViewgroup"><span class="fa fa-angle-double-left"></span> {{ $t('results.resultsView.backToGroupOverview') }}</button>
 
-				@sort="sort = $event"
-				@viewgroup="originalGroupBySettings = {page, sort}; log(page, sort); viewGroup = $event.id; _viewGroupName = $event.displayName;"
-			>
-				<GroupBy slot="groupBy" :type="type"
-					:disabled="!!request"
-					:originalGroupBySettings="originalGroupBySettings"
-					@viewgroupLeave="leaveViewgroup"
-				/>
+			<Pagination slot="pagination"
+				style="display: block; margin: 10px 0;"
 
-				<Pagination slot="pagination"
-					style="display: block; margin: 10px 0;"
+				:page="pagination.shownPage"
+				:maxPage="pagination.maxShownPage"
+				:disabled="!!request"
 
-					:page="pagination.shownPage"
-					:maxPage="pagination.maxShownPage"
-					:disabled="!!request"
+				@change="page = $event"
+			/>
 
-					@change="page = $event"
-				/>
-			</component>
-			<hr>
-		</template>
-		<div v-else-if="results" class="no-results-found">No results found.</div>
+			<Sort slot="sort"
+				v-model="sort"
+				:hits="isHits"
+				:docs="isDocs"
+				:groups="isGroups"
+
+				:corpus="corpus"
+				:annotations="sortAnnotations"
+				:metadata="sortMetadata"
+
+				:disabled="!!request"
+			/>
+
+			<Export slot="export" v-if="exportEnabled"
+				:results="results"
+				:type="id"
+				:disabled="!!request"
+				:annotations="exportAnnotations"
+				:metadata="exportMetadata"
+			/>
+
+		</component>
+		<div v-else-if="results" class="no-results-found">{{ $t('results.resultsView.noResultsFound') }}</div>
 		<div v-else-if="!valid" class="no-results-found">
-			This view is inactive because no search criteria for words were specified.
+			{{ $t('results.resultsView.inactiveView') }}
 		</div>
 		<div v-else-if="error != null" class="no-results-found">
 			<span class="fa fa-exclamation-triangle text-danger"></span><br>
 			<span v-html="error"></span>
 			<br>
 			<br>
-			<button type="button" class="btn btn-default" title="Try again with current search settings" @click="markDirty();">Try again</button>
+			<button type="button" class="btn btn-default" :title="$t('results.resultsView.tryAgainTitle')" @click="markDirty();">{{ $t('results.resultsView.tryAgain') }}</button>
 		</div>
-
-		<div v-show="resultsHaveData" class="text-right">
-			<SelectPicker
-				data-class="btn-sm btn-default"
-				placeholder="Sort by..."
-				data-menu-width="grow"
-
-				allowHtml
-				hideDisabled
-				allowUnknownValues
-				right
-
-				:searchable="sortOptions.flatMap(o => o.options && !o.disabled ? o.options.filter(opt => !opt.disabled) : o).length > 12"
-				:options="sortOptions"
-				:disabled="!!request"
-
-				v-model="sort"
-			/>
-
-			<button v-if="isDocs && resultsHaveHits"
-				type="button"
-				class="btn btn-primary btn-sm"
-
-				@click="showDocumentHits = !showDocumentHits"
-			>
-				{{showDocumentHits ? 'Hide Hits' : 'Show Hits'}}
-			</button>
-			<button v-if="isHits"
-				type="button"
-				class="btn btn-primary btn-sm"
-
-				@click="showTitles = !showTitles"
-			>
-				{{showTitles ? 'Hide' : 'Show'}} Titles
-			</button>
-
-			<div class="btn-group" v-if="results && exportEnabled">
-				<button
-					type="button"
-					class="btn btn-default btn-sm"
-					:disabled="downloadInProgress || !resultsHaveData || !!request"
-					:title="downloadInProgress ? 'Downloading...' : 'Export results as a CSV file'"
-
-					@click="downloadCsv(false)"
-				>
-					<template v-if="downloadInProgress">&nbsp;<span class="fa fa-spinner fa-spin"></span>&nbsp;</template>Export
-				</button>
-				<button
-					type="button"
-					class="btn btn-default btn-sm"
-					:disabled="downloadInProgress || !resultsHaveData || !!request"
-					:title="downloadInProgress ? 'Downloading...' : 'Export Results as a CSV file for use with Excel'"
-
-					@click="downloadCsv(true)"
-				>
-					<template v-if="downloadInProgress">&nbsp;<span class="fa fa-spinner fa-spin"></span>&nbsp;</template>Export for Excel
-				</button>
-				<!-- <button type="button"  class="btn btn-default btn-sm dropdown-toggle" data-toggle="dropdown" aria-expanded="false">
-					<span class="caret"></span>
-				</button> -->
-				<!-- <ul class="dropdown-menu dropdown-menu-right" @click.stop>
-					<li><a class="checkbox" title="Adds a header describing the query used to generate these results.">
-						<label><input type="checkbox" v-model="exportSummary">Include summary</label></a>
-					</li>
-					<li><a class="checkbox"
-						title="Adds a header line declaring that the file is comma-separated,
-						for some versions of microsoft excel this is required to correctly display the file."
-					><label><input type="checkbox" v-model="exportSeparator">Export for excel</label></a></li>
-					<li v-if="isHits"><a class="checkbox"
-						title="Also export document metadata. Warning: this might result in very large exports!"
-					><label><input type="checkbox" v-model="exportHitMetadata">Export metadata</label></a></li>
-				</ul> -->
-			</div>
-		</div>
-		<hr>
-		<Debug>
-			<div>
-				<div>BlackLab response: </div>
-				<pre v-if="results">{{JSON.stringify(results.summary, undefined, 2)}}</pre>
-			</div>
-		</Debug>
 	</div>
 </template>
 
 <script lang="ts">
 import Vue from 'vue';
-import {saveAs} from 'file-saver';
 
 import jsonStableStringify from 'json-stable-stringify';
 
@@ -158,11 +88,11 @@ import * as Api from '@/api';
 
 import * as RootStore from '@/store/search/';
 import * as CorpusStore from '@/store/search/corpus';
-import * as ResultsStore from '@/store/search/results';
+import * as ResultsStore from '@/store/search/results/views';
 import * as GlobalStore from '@/store/search/results/global';
 import * as QueryStore from '@/store/search/query';
-import * as InterfaceStore from '@/store/search/form/interface';
 import * as UIStore from '@/store/search/ui';
+import * as GlossModule from '@/store/search/form/glossStore' // Jesse
 
 import GroupResults from '@/pages/search/results/table/GroupResults.vue';
 import HitResults from '@/pages/search/results/table/HitResults.vue';
@@ -170,14 +100,18 @@ import DocResults from '@/pages/search/results/table/DocResults.vue';
 import Totals from '@/pages/search/results/ResultTotals.vue';
 import GroupBy from '@/pages/search/results/groupby/GroupBy.vue';
 
+import Sort from '@/pages/search/results/Sort.vue';
+import BreadCrumbs from '@/pages/search/results/BreadCrumbs.vue';
+import Export from '@/pages/search/results/Export.vue';
+
 import Pagination from '@/components/Pagination.vue';
-import SelectPicker, {OptGroup} from '@/components/SelectPicker.vue';
+import SelectPicker from '@/components/SelectPicker.vue';
+import Spinner from '@/components/Spinner.vue';
 
 import debug, { debugLog } from '@/utils/debug';
 
 import * as BLTypes from '@/types/blacklabtypes';
-import cloneDeep from 'clone-deep';
-import { getAnnotationSubset, getMetadataSubset } from '@/utils';
+import { NormalizedIndex } from '@/types/apptypes';
 
 export default Vue.extend({
 	components: {
@@ -187,13 +121,22 @@ export default Vue.extend({
 		DocResults,
 		Totals,
 		GroupBy,
-		SelectPicker
+		SelectPicker,
+		Sort,
+		BreadCrumbs,
+		Export,
+		Spinner
 	},
 	props: {
-		type: {
-			type: String as () => ResultsStore.ViewId,
-			required: true,
-		}
+		/**
+		 * In our case, always 'hits' or 'docs', we don't support adding another ResultsView tab with a different ID.
+		 * Since we use this ID to determine whether we're getting hits or docs from blacklab, and some rendering or logic may depend on it being 'hits' or 'docs' as well.
+		 */
+		id: String as () => 'hits'|'docs',
+		label: String,
+		active: Boolean,
+
+		store: Object as () => ResultsStore.ViewModule,
 	},
 	data: () => ({
 		isDirty: true, // since we don't have any results yet
@@ -203,8 +146,6 @@ export default Vue.extend({
 		cancel: null as null|Api.Canceler,
 
 		_viewGroupName: null as string|null,
-		showTitles: true,
-		showDocumentHits: false,
 
 		downloadInProgress: false, // csv download
 		// exportSummary: false,
@@ -215,12 +156,13 @@ export default Vue.extend({
 
 		// Should we scroll when next results arrive - set when main form submitted
 		scroll: true,
-		// Should we clear the results when we begin the next request? - set when main for submitted.
+		// Should we clear the results when we begin the next request? - set when main form is submitted.
 		clearResults: false,
 
-		originalGroupBySettings: null as null|{
+		/** When no longer viewing contents of a group, restore the page and sorting (i.e. user's position in the results). */
+		restoreOnViewGroupLeave: null as null|{
 			page: number;
-			sort: string;
+			sort: string|null;
 		},
 
 		debug
@@ -235,7 +177,7 @@ export default Vue.extend({
 				this.cancel = null;
 				this.request = null;
 			}
-			if (this.visible) {
+			if (this.active) {
 				this.refresh();
 			}
 		},
@@ -260,9 +202,10 @@ export default Vue.extend({
 
 			if (this.clearResults) { this.results = this.error = null; this.clearResults = false; }
 
+			const nonce = this.refreshParameters;
 			const params = RootStore.get.blacklabParameters()!;
-			const apiCall = this.type === 'hits' ? Api.blacklab.getHits : Api.blacklab.getDocs;
-			debugLog('starting search', this.type, params);
+			const apiCall = this.id === 'hits' ? Api.blacklab.getHits : Api.blacklab.getDocs;
+			debugLog('starting search', this.id, params);
 
 			const r = apiCall(this.indexId, params, {headers: { 'Cache-Control': 'no-cache' }});
 			this.request = r.request;
@@ -271,7 +214,10 @@ export default Vue.extend({
 			setTimeout(() => this.scrollToResults(), 1500);
 
 			this.request
-			.then(this.setSuccess, e => this.setError(e, !!params.group))
+			.then(
+				r => { if (nonce === this.refreshParameters) this.setSuccess(r)},
+				e => { if (nonce === this.refreshParameters) this.setError(e, !!params.group)}
+			)
 			.finally(() => this.scrollToResults())
 		},
 		setSuccess(data: BLTypes.BLSearchResult) {
@@ -281,44 +227,24 @@ export default Vue.extend({
 			this.error = null;
 			this.request = null;
 			this.cancel = null;
+
+			// Jesse (glosses): hier ook een keer de page hits in de gloss store updaten
+			const get_hit_id = GlossModule.get.settings()?.get_hit_id;
+			if (BLTypes.isHitResults(data) && get_hit_id) {
+				GlossModule.actions.setCurrentPage(data.hits.map(get_hit_id));
+			}
 		},
 		setError(data: Api.ApiError, isGrouped?: boolean) {
 			if (data.title !== 'Request cancelled') { // TODO
 				debugLog('Request failed: ', data);
-				this.error = UIStore.getState().global.errorMessage(data, isGrouped ? 'groups' : this.type);
+				this.error = UIStore.getState().global.errorMessage(data, isGrouped ? 'groups' : this.id as 'hits'|'docs');
 				this.results = null;
 				this.paginationResults = null;
 			}
 			this.request = null;
 			this.cancel= null;
 		},
-		downloadCsv(excel: boolean) {
-			if (this.downloadInProgress || !this.results) {
-				return;
-			}
 
-			this.downloadInProgress = true;
-			const apiCall = this.type === 'hits' ? Api.blacklab.getHitsCsv : Api.blacklab.getDocsCsv;
-			const params = cloneDeep(this.results.summary.searchParam);
-			if (UIStore.getState().results.shared.detailedAnnotationIds) {
-				params.listvalues = UIStore.getState().results.shared.detailedAnnotationIds!.join(',');
-			}
-			if (UIStore.getState().results.shared.detailedMetadataIds) {
-				params.listmetadatavalues = UIStore.getState().results.shared.detailedMetadataIds!.join(',');
-			}
-			(params as any).csvsepline = !!excel;
-			(params as any).csvsummary = true;
-
-			debugLog('starting csv download', this.type, params);
-			apiCall(this.indexId, params).request
-			.then(
-				blob => saveAs(blob, 'data.csv'),
-				error => debugLog('Error downloading csv file', error)
-			)
-			.finally(() => {
-				this.downloadInProgress = false;
-			});
-		},
 		scrollToResults() {
 			if (this.scroll) {
 				this.scroll = false;
@@ -330,34 +256,35 @@ export default Vue.extend({
 		},
 		leaveViewgroup() {
 			this.viewGroup = null;
-			this.page = this.originalGroupBySettings?.page || 0;
-			this.sort = this.originalGroupBySettings?.sort || null;
-			this.originalGroupBySettings = null;
+			this.page = this.restoreOnViewGroupLeave?.page || 0;
+			this.sort = this.restoreOnViewGroupLeave?.sort || null;
+			this.restoreOnViewGroupLeave = null;
 		}
 	},
 	computed: {
-		// Store properties
-		storeModule(): ReturnType<(typeof ResultsStore)['get']['resultsModules']>[number] { return ResultsStore.get.resultsModules().find(m => m.namespace === this.type)!; },
 		groupBy: {
-			get(): string[] { return this.storeModule.getState().groupBy; },
-			set(v: string[]) { this.storeModule.actions.groupBy(v); }
-		},
-		groupByAdvanced: {
-			get(): string[] { return this.storeModule.getState().groupByAdvanced; },
-			set(v: string[]) { this.storeModule.actions.groupByAdvanced(v); }
+			get(): string[] { return this.store.getState().groupBy; },
+			set(v: string[]) { this.store.actions.groupBy(v); }
 		},
 		page: {
-			get(): number { const n = this.storeModule.getState().page; console.log('got page', n); return n; },
-			set(v: number) { this.storeModule.actions.page(v); console.log('set page', v); }
+			get(): number { const n = this.store.getState().page; console.log('got page', n); return n; },
+			set(v: number) { this.store.actions.page(v); console.log('set page', v); }
 		},
 		sort: {
-			get(): string|null { return this.storeModule.getState().sort; },
-			set(v: string|null) { this.storeModule.actions.sort(v); }
+			get(): string|null { return this.store.getState().sort; },
+			set(v: string|null) { this.store.actions.sort(v); }
 		},
 		viewGroup: {
-			get(): string|null { return this.storeModule.getState().viewGroup; },
-			set(v: string|null) { this.storeModule.actions.viewGroup(v); }
+			get(): string|null { return this.store.getState().viewGroup; },
+			set(v: string|null) { this.store.actions.viewGroup(v); }
 		},
+
+		corpus(): NormalizedIndex { return CorpusStore.getState().corpus!; },
+		sortAnnotations(): string[] { return UIStore.getState().results.shared.sortAnnotationIds; },
+		sortMetadata(): string[] { return UIStore.getState().results.shared.sortMetadataIds; },
+		exportAnnotations(): string[]|null { return UIStore.getState().results.shared.detailedAnnotationIds; },
+		exportMetadata(): string[]|null { return UIStore.getState().results.shared.detailedMetadataIds; },
+
 
 		exportEnabled(): boolean { return UIStore.getState().results.shared.exportEnabled; },
 
@@ -371,9 +298,9 @@ export default Vue.extend({
 			return jsonStableStringify({
 				global: GlobalStore.getState(),
 				self: {
-					...this.storeModule.getState(),
+					...this.store.getState(),
 					groupDisplayMode: null // ignore this property
-				} as Partial<ResultsStore.PartialRootState[ResultsStore.ViewId]>,
+				} as Partial<ResultsStore.ViewRootState>,
 				query: QueryStore.getState()
 			});
 		},
@@ -400,7 +327,7 @@ export default Vue.extend({
 				BLTypes.isHitResults(r) ? r.summary.numberOfHitsRetrieved :
 				r.summary.numberOfDocsRetrieved;
 
-			// subtract one page if number of results exactly divisible by page size
+			// subtract one page if number of results exactly diactive by page size
 			// e.g. 20 results for a page size of 20 is still only one page instead of 2.
 			const pageCount = Math.floor(totalResults / pageSize) - ((totalResults % pageSize === 0 && totalResults > 0) ? 1 : 0);
 
@@ -410,9 +337,8 @@ export default Vue.extend({
 			};
 		},
 
-		visible(): boolean { return InterfaceStore.get.viewedResults() === this.type; },
 		valid(): boolean {
-			if (this.type === 'hits') {
+			if (this.id === 'hits') {
 				const params = RootStore.get.blacklabParameters();
 				return !!(params && params.patt);
 			} else {
@@ -420,7 +346,7 @@ export default Vue.extend({
 			}
 		},
 		// simple view variables
-		indexId(): string { return CorpusStore.getState().id; },
+		indexId(): string { return INDEX_ID; },
 		resultsHaveData(): boolean {
 			if (BLTypes.isDocGroups(this.results)) { return this.results.docGroups.length > 0; }
 			if (BLTypes.isHitGroups(this.results)) { return this.results.hitGroups.length > 0; }
@@ -431,28 +357,32 @@ export default Vue.extend({
 		isHits(): boolean { return BLTypes.isHitResults(this.results); },
 		isDocs(): boolean { return BLTypes.isDocResults(this.results); },
 		isGroups(): boolean { return BLTypes.isGroups(this.results); },
-		resultsHaveHits(): boolean { return this.results != null && !!this.results.summary.searchParam.patt; },
+
 		viewGroupName(): string {
 			if (this.viewGroup == null) { return ''; }
 			return this._viewGroupName ? this._viewGroupName :
 				this.viewGroup.substring(this.viewGroup.indexOf(':')+1) || '[unknown]';
 		},
 
-		breadCrumbs(): any {
+		breadCrumbs(): Array<{
+			label: string,
+			title: string,
+			active: boolean,
+			onClick: () => void
+		}> {
 			const r = [];
 			r.push({
-				label: this.type === 'hits' ? 'Hits' : 'Documents',
+				label: this.id === 'hits' ? 'Hits' : 'Documents',
 				title: 'Go back to ungrouped results',
-				active: false, //(this.groupBy.length + this.groupByAdvanced.length) === 0,
+				active: false,
 				onClick: () => {
 					this.groupBy = [];
-					this.groupByAdvanced = [];
 					GlobalStore.actions.sampleSize(null);
 				}
 			});
-			if ((this.groupBy.length + this.groupByAdvanced.length) > 0) {
+			if (this.groupBy.length > 0) {
 				r.push({
-					label: 'Grouped by ' + this.groupBy.concat(this.groupByAdvanced).toString(),
+					label: 'Grouped by ' + this.groupBy.toString(),
 					title: 'Go back to grouped results',
 					active: false, //this.viewGroup == null,
 					onClick: () => {
@@ -483,67 +413,7 @@ export default Vue.extend({
 			r[r.length -1].active = true;
 			return r;
 		},
-		sortOptions(): OptGroup[] {
-			// NOTE: we need to always pass all available options, then hide invalids based on displayed results
-			// if we don't do this, sorting will be cleared on initial page load
-			// This happens because results aren't loaded yet, thus isHits/isDocs/isGroups all return false, and no options would be available
-			// then the selectpicker will reset value to undefined, which clears it in the store, which updates the url, etc.
-			const opts = [] as OptGroup[];
 
-			if (this.isGroups) {
-				opts.push({
-					label: 'Groups',
-					options: [{
-						label: 'Sort by Group Name',
-						value: 'identity',
-					}, {
-						label: 'Sort by Group Name (descending)',
-						value: '-identity',
-					}, {
-						label: 'Sort by Size',
-						value: 'size',
-					}, {
-						label: 'Sort by Size (ascending)',
-						value: '-size', // numeric sorting is inverted: https://github.com/INL/corpus-frontend/issues/340
-					}]
-				});
-			}
-
-			if (this.isHits) {
-				opts.push(...getAnnotationSubset(
-					UIStore.getState().results.shared.sortAnnotationIds,
-					CorpusStore.get.annotationGroups(),
-					CorpusStore.get.allAnnotationsMap(),
-					'Sort',
-					CorpusStore.get.textDirection(),
-					this.debug.debug
-				));
-			}
-			if (this.isDocs) {
-				opts.push({
-					label: 'Documents',
-					options: [{
-						label: 'Sort by hits',
-						value: 'numhits'
-					}, {
-						label: 'Sort by hits (ascending)',
-						value: '-numhits' // numeric sorting is inverted: https://github.com/INL/corpus-frontend/issues/340
-					}]
-				});
-			}
-
-			if (!this.isGroups) {
-				opts.push(...getMetadataSubset(
-					UIStore.getState().results.shared.sortMetadataIds,
-					CorpusStore.get.metadataGroups(),
-					CorpusStore.get.allMetadataFieldsMap(),
-					'Sort',
-					this.debug.debug
-				));
-			}
-
-			return opts;
-		},
 
 		resultComponentName(): string {
 			if (this.isGroups) {
@@ -555,25 +425,11 @@ export default Vue.extend({
 			}
 		},
 		resultComponentData(): any {
-			switch (this.resultComponentName) {
-				case 'GroupResults': return {
-					results: this.results,
-					disabled: !!this.request,
-					sort: this.sort,
-				};
-				case 'HitResults': return {
-					results: this.results,
-					disabled: !!this.request,
-					sort: this.sort,
-					showTitles: this.showTitles,
-				};
-				case 'DocResults': return {
-					results: this.results,
-					disabled: !!this.request,
-					sort: this.sort,
-					showDocumentHits: this.showDocumentHits
-				};
-			}
+			return {
+				results: this.results,
+				disabled: !!this.request,
+				sort: this.sort,
+			};
 		},
 	},
 	watch: {
@@ -586,16 +442,16 @@ export default Vue.extend({
 		},
 		refreshParameters: {
 			handler(cur, prev) {
-				if (this.visible) {
+				if (this.active) {
 					this.refresh();
 				} else {
 					this.markDirty();
 				}
 			},
 		},
-		visible: {
-			handler(visible) {
-				if (visible && this.isDirty) {
+		active: {
+			handler(active) {
+				if (active && this.isDirty) {
 					this.refresh();
 				}
 			},
@@ -607,28 +463,6 @@ export default Vue.extend({
 
 <style lang="scss">
 
-.crumbs-totals {
-	margin: 0 -15px 10px;
-	display:flex;
-	flex-wrap:nowrap;
-	align-items:flex-start;
-	justify-content:space-between;
-
-	> .breadcrumb.resultscrumb {
-		background: white;
-		border-bottom: 1px solid rgba(0,0,0,0.1);
-		border-radius: 0;
-		padding: 12px 15px;
-		margin-bottom: 0;
-		flex-grow: 1;
-	}
-	> .result-totals {
-		background: white;
-		padding: 8px 8px 0 15px;
-		flex: none;
-	}
-}
-
 .no-results-found {
 	padding: 1.25em;
 	text-align: center;
@@ -636,8 +470,6 @@ export default Vue.extend({
 	font-size: 16px;
 	color: #777;
 }
-
-
 
 table {
 	> thead > tr > th {
@@ -659,6 +491,12 @@ table {
 // Make entire row clickable even when the document title is short
 .doctitle {
 	display: block;
+}
+
+.result-totals {
+	background: white;
+	padding: 8px 8px 0 15px;
+	flex: none;
 }
 
 </style>

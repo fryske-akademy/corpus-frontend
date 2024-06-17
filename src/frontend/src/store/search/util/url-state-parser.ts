@@ -1,11 +1,9 @@
-import Vue from 'vue';
-
 import memoize from 'memoize-decorator';
 
 import BaseUrlStateParser from '@/store/util/url-state-parser-base';
 import LuceneQueryParser from 'lucene-query-parser';
 
-import {mapReduce, MapOf, decodeAnnotationValue} from '@/utils';
+import {mapReduce, decodeAnnotationValue, uiTypeSupport, getCorrectUiType} from '@/utils';
 import parseCql, {Attribute} from '@/utils/cqlparser';
 import parseLucene from '@/utils/luceneparser';
 import {debugLog} from '@/utils/debug';
@@ -15,6 +13,8 @@ import * as UIModule from '@/store/search/ui';
 import * as HistoryModule from '@/store/search/history';
 import * as TagsetModule from '@/store/search/tagset';
 import * as QueryModule from '@/store/search/query';
+import * as ConceptModule from '@/store/search/form/conceptStore';
+import * as GlossModule from '@/store/search/form/glossStore';
 
 // Form
 import * as FilterModule from '@/store/search/form/filters';
@@ -24,10 +24,8 @@ import * as ExploreModule from '@/store/search/form/explore';
 import * as GapModule from '@/store/search/form/gap';
 
 // Results
-import * as ResultsManager from '@/store/search/results';
-import * as DocResultsModule from '@/store/search/results/docs';
+import * as ViewModule from '@/store/search/results/views';
 import * as GlobalResultsModule from '@/store/search/results/global';
-import * as HitResultsModule from '@/store/search/results/hits';
 
 import {FilterValue, AnnotationValue} from '@/types/apptypes';
 
@@ -58,10 +56,11 @@ export default class UrlStateParser extends BaseUrlStateParser<HistoryModule.His
 			patterns: this.patterns,
 			gap: this.gap,
 
-			docs: this.docs,
+			// settings for the active results view
+			view: this.view(this.interface.viewedResults),
 			global: this.global,
-			hits: this.hits,
-
+			concepts: this.concepts,
+			glosses: this.glosses,
 			// submitted query not parsed from url: is restored from rest of state later.
 		};
 	}
@@ -84,7 +83,7 @@ export default class UrlStateParser extends BaseUrlStateParser<HistoryModule.His
 
 		try {
 			const luceneQueryAST = LuceneQueryParser.parse(luceneString);
-			const parsedQuery: MapOf<FilterValue> = mapReduce(parseLucene(luceneString), 'id');
+			const parsedQuery: Record<string, FilterValue> = mapReduce(parseLucene(luceneString), 'id');
 
 			const metadataFields = CorpusModule.get.allMetadataFieldsMap();
 			const filterDefinitions = FilterModule.getState().filters;
@@ -93,7 +92,7 @@ export default class UrlStateParser extends BaseUrlStateParser<HistoryModule.His
 				.filter(id => metadataFields[id] == null) // that way, they can delete values from the filtervalues and prevent other filters from parsing those values as well, which would lead to the filter being "doubled" on url decode
 				.concat(UIModule.getState().search.shared.searchMetadataIds)
 
-			const filterValues: MapOf<FilterModule.FullFilterState> = {};
+			const filterValues: Record<string, FilterModule.FullFilterState> = {};
 
 			Object.values(FilterModule.getState().filters)
 			.forEach(filterDefinition => {
@@ -124,7 +123,7 @@ export default class UrlStateParser extends BaseUrlStateParser<HistoryModule.His
 	 */
 	@memoize
 	private get frequencies(): null|ExploreModule.ModuleRootState['frequency'] {
-		if (this.expertPattern !== '[]' || this._groups.length !== 1 || this.groupBy.length !== 1) {
+		if (this.expertPattern !== '[]' || this.groupBy.length !== 1) {
 			return null;
 		}
 
@@ -206,14 +205,14 @@ export default class UrlStateParser extends BaseUrlStateParser<HistoryModule.His
 		return value ? { value } : GapModule.defaults;
 	}
 
+	/** Usually hits or docs, but might be null if no results currently viewed. May also be something different if custom views were registered. */
 	@memoize
-	private get viewedResults(): 'hits'|'docs'|null {
-		const path = this.paths.length ? this.paths[this.paths.length-1].toLowerCase() : null;
-		if (path !== 'hits' && path !== 'docs') {
-			return null;
-		} else {
-			return path;
-		}
+	private get viewedResults(): string|null {
+		// paths are already decoded, and have the base portion removed, so we can just use them directly
+		if (this.paths[1] === 'search' && this.paths.length === 3)
+			return this.paths[2] || null; // hits or docs, or custom view
+
+		return null;
 	}
 
 	/**
@@ -226,7 +225,7 @@ export default class UrlStateParser extends BaseUrlStateParser<HistoryModule.His
 			return null;
 		}
 
-		if (this.groupByAdvanced.length !== 0 || this.groupBy.length === 0) {
+		if (this.groupBy.length === 0) {
 			return null;
 		}
 
@@ -236,7 +235,7 @@ export default class UrlStateParser extends BaseUrlStateParser<HistoryModule.His
 
 		return {
 			groupBy: this.groupBy[0],
-			groupDisplayMode: this.hitsOrDocs('docs').groupDisplayMode || ExploreModule.defaults.corpora.groupDisplayMode
+			groupDisplayMode: this.view('docs').groupDisplayMode || ExploreModule.defaults.corpora.groupDisplayMode
 		};
 	}
 
@@ -248,7 +247,7 @@ export default class UrlStateParser extends BaseUrlStateParser<HistoryModule.His
 	private get ngrams(): null|ExploreModule.ModuleRootState['ngram'] {
 		const allAnnotations = CorpusModule.get.allAnnotationsMap();
 
-		if (this.groupByAdvanced.length || this.groupBy.length === 0) {
+		if (this.groupBy.length === 0) {
 			return null;
 		}
 
@@ -286,7 +285,7 @@ export default class UrlStateParser extends BaseUrlStateParser<HistoryModule.His
 			size: cql.tokens.length,
 			tokens: cql.tokens.map(t => {
 				const valueAnnotationId = t.expression ? (t.expression as Attribute).name : defaultNgramTokenAnnotation;
-				const type = QueryModule.getCorrectUiType(QueryModule.uiTypeSupport.explore.ngram, allAnnotations[valueAnnotationId].uiType);
+				const type = getCorrectUiType(uiTypeSupport.explore.ngram, allAnnotations[valueAnnotationId].uiType);
 
 				return {
 					// when expression is undefined, the token was just '[]' in the query, so set it to defaults.
@@ -303,26 +302,20 @@ export default class UrlStateParser extends BaseUrlStateParser<HistoryModule.His
 			simple: this.simplePattern,
 			extended: this.extendedPattern,
 			advanced: this.advancedPattern,
+			concept: this.conceptPattern,
+			glosses: this.glossPattern,
 			expert: this.expertPattern,
 		};
 	}
 
-	private get hits(): HitResultsModule.ModuleRootState {
-		return this.hitsOrDocs('hits');
-	}
-
-	private get docs(): DocResultsModule.ModuleRootState {
-		return this.hitsOrDocs('docs');
-	}
-
 	@memoize
-	private get global(): GlobalResultsModule.ModuleRootState {
+	private get global(): GlobalResultsModule.ExternalModuleRootState {
 		return {
 			pageSize: this.pageSize,
 			sampleMode: this.sampleMode,
 			sampleSeed: this.sampleSeed,
 			sampleSize: this.sampleSize,
-			wordsAroundHit: this.wordsAroundHit
+			context: this.context
 		};
 	}
 
@@ -448,17 +441,10 @@ export default class UrlStateParser extends BaseUrlStateParser<HistoryModule.His
 	}
 
 	@memoize
-	private get simplePattern(): string|null {
+	private get simplePattern(): AnnotationValue {
 		// Simple view is just a single annotation without any within query or filters
 		// NOTE: do not use extendedPattern, as the annotation used for simple may not be available for extended searching!
-		const vals = Object.values(this.annotationValues);
-		const within = this.within;
-
-		if (within == null && vals.length === 1 && vals[0].id === CorpusModule.get.firstMainAnnotation().id && !vals[0].case) {
-			return vals[0].value;
-		}
-
-		return null;
+		return this.annotationValues[CorpusModule.get.firstMainAnnotation().id] || {};
 	}
 
 	@memoize
@@ -486,8 +472,41 @@ export default class UrlStateParser extends BaseUrlStateParser<HistoryModule.His
 	}
 
 	@memoize
+	private get conceptPattern(): string|null { // Jesse
+		return this.getString('patt', null, v=>v?v:null); // TODO dit zal wel anders moeten
+	}
+
+	@memoize
+	private get glossPattern(): string|null { // Jesse
+		return this.getString('patt', null, v=>v?v:null); // TODO dit zal wel anders moeten
+	}
+
+	@memoize
 	private get expertPattern(): string|null {
 		return this.getString('patt', null, v=>v?v:null);
+	}
+
+	@memoize
+	private get concepts(): ConceptModule.HistoryState {
+		return {
+			main_fields: [],
+			query: [[],[]],
+			query_cql: this.conceptPattern ||'',
+			target_element: '',
+		}
+	}
+
+	@memoize
+	private get glosses(): GlossModule.HistoryState {
+		return {
+			current_page: [],
+			gloss_query: {
+				corpus: '',
+				parts: {}
+			},
+			gloss_query_cql: '',
+			glosses: {},
+		}
 	}
 
 	@memoize
@@ -522,13 +541,12 @@ export default class UrlStateParser extends BaseUrlStateParser<HistoryModule.His
 	}
 
 	@memoize
-	private get wordsAroundHit(): number|null {
-		return this.getNumber('wordsaroundhit', null, v => v != null && v >= 0 && v <= 10 ? v : null);
+	private get context(): number|null {
+		return this.getNumber('context', null, v => v != null && v >= 0 && v <= 10 ? v : null);
 	}
 
-	/** Return the group variables unprocessed, including their case flags and context groups intact */
 	@memoize
-	private get _groups(): string[] {
+	private get groupBy(): string[] {
 		return this.getString('group', '')!
 		.split(',')
 		.map(g => g.trim())
@@ -536,38 +554,28 @@ export default class UrlStateParser extends BaseUrlStateParser<HistoryModule.His
 	}
 
 	@memoize
-	private get groupBy(): string[] {
-		return this._groups
-		.filter(g => !g.startsWith('context:'))
-		.map(g => g.replace(/\:[is]$/, '')); // strip case-sensitivity flag from value, is only visible in url
-	}
-
-	@memoize
-	private get groupByAdvanced(): string[] {
-		return this._groups
-		.filter(g => g.startsWith('context:'));
-	}
-
-	@memoize
 	private get caseSensitive(): boolean {
-		const groups = this._groups
-		.filter(g => !g.startsWith('context:'));
+		const groups = this.groupBy.filter(g => !g.startsWith('context:'));
 
 		return groups.length > 0 && groups.every(g => g.endsWith(':s'));
 	}
 
-	// No memoize - has parameters
-	private hitsOrDocs(view: ResultsManager.ViewId): DocResultsModule.ModuleRootState { // they're the same anyway.
+	/**
+	 * Get the state for a specific view.
+	 * Or when a custom module has been defined, the custom module.
+	 * @param view
+	 * @returns
+	 */
+	private view(view?: string|null): ViewModule.ViewRootState { // they're the same anyway.
 		if (this.viewedResults !== view) {
-			return DocResultsModule.defaults;
+			return cloneDeep(ViewModule.initialViewState);
 		}
 
 		return {
+			customState: JSON.parse(this.getString('resultViewCustomState', 'null', v => v ?? 'null')!),
 			groupBy: this.groupBy,
-			groupByAdvanced: this.groupByAdvanced,
-			caseSensitive: this.caseSensitive,
 			sort: this.getString('sort', null, v => v?v:null),
-			viewGroup: this.getString('viewgroup', undefined, v => (v && this._groups.length > 0)?v:null),
+			viewGroup: this.getString('viewgroup', undefined, v => (v && this.groupBy.length > 0)?v:null),
 			page: this.getNumber('first', 0, v => Math.floor(Math.max(0, v)/this.pageSize)/* round down to nearest page containing the starting index */)!,
 			groupDisplayMode: this.getString('groupDisplayMode', null, v => v?v:null),
 		};

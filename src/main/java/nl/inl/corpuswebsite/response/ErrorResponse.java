@@ -10,12 +10,12 @@ import nl.inl.corpuswebsite.BaseResponse;
 public class ErrorResponse extends BaseResponse {
 
     public ErrorResponse() {
-        super(false);
+        super("error", false);
     }
 
     @Override
     protected void completeRequest() {
-        context.put("error", "Response for '" + request.getRequestURI() + "' not found");
+        model.put("error", "Response for '" + request.getRequestURI() + "' not found");
 
         try {
             response.sendError(HttpServletResponse.SC_NOT_FOUND);

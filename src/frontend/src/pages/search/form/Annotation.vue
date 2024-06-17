@@ -1,7 +1,7 @@
 <template>
-	<div class="form-group propertyfield" :id="htmlId"> <!-- behaves as .row when in .form-horizontal so .row may be omitted -->
-		<label :for="inputId" class="col-xs-12 col-md-3" :title="annotation.description || undefined">{{displayName}} <Debug>(id: {{annotation.id}})</Debug></label>
-		<div class="col-xs-12 col-md-9">
+	<div :class="bare ? '' : 'form-group propertyfield'" :id="htmlId"> <!-- behaves as .row when in .form-horizontal so .row may be omitted -->
+		<label v-if="!bare" :for="inputId" class="col-xs-12 col-md-3" :title="annotation.description || undefined">{{displayName}} <Debug>(id: {{annotation.id}})</Debug></label>
+		<div :class="bare ? '' : 'col-xs-12 col-md-9'">
 			<SelectPicker v-if="annotation.uiType === 'select'"
 				data-width="100%"
 				container="body"
@@ -24,7 +24,7 @@
 
 				ref="reset"
 			/>
-			<div v-else class="input-group">
+			<div v-else :class="bare ? '' : 'input-group'">
 				<Autocomplete
 					type="text"
 					class="form-control"
@@ -41,7 +41,7 @@
 					:url="autocompleteUrl"
 					v-model="value"
 				/>
-				<div class="input-group-btn">
+				<div v-if="!bare" class="input-group-btn">
 					<a v-if="annotation.uiType === 'pos'"
 						data-toggle="modal"
 						class="btn btn-default"
@@ -75,7 +75,7 @@
 					ref="reset"
 				/>
 			</template>
-			<div v-if="annotation.caseSensitive" class="checkbox">
+			<div v-if="annotation.caseSensitive && !bare" class="checkbox">
 				<label :for="caseInputId">
 					<input
 						type="checkbox"
@@ -85,7 +85,7 @@
 
 						v-model="caseSensitive"
 					>
-					Case-&nbsp;and&nbsp;diacritics-sensitive
+					{{$t('annotation.caseSensitive')}}
 				</label>
 			</div>
 		</div>
@@ -106,11 +106,11 @@ import Autocomplete from '@/components/Autocomplete.vue';
 import Lexicon from '@/pages/search/form/Lexicon.vue';
 import UID from '@/mixins/uid';
 
-import {paths} from '@/api';
-import { NormalizedAnnotation } from '@/types/apptypes';
+import {blacklabPaths} from '@/api';
+import { AnnotationValue, NormalizedAnnotation } from '@/types/apptypes';
 
 export default Vue.extend({
-	mixins: [UID],
+	mixins: [UID] as any,
 	components: {
 		SelectPicker,
 		PartOfSpeech,
@@ -119,12 +119,24 @@ export default Vue.extend({
 	},
 	props: {
 		annotation: Object as () => NormalizedAnnotation,
-		htmlId: String
+		htmlId: String,
+		bare: Boolean,
+		/**
+		 * Set to true if this annotation is the "simple" annotation. I.e. the Annotation in the "simple" tab of the search form.
+		 * This will change which field the value is written to the vuex store.
+		 */
+		simple: Boolean
 	},
 	data: () => ({
 		subscriptions: [] as Array<() => void>,
 	}),
 	computed: {
+		stateGetter(): () => AnnotationValue {
+			return this.simple ? PatternStore.get.simple : PatternStore.get.annotationValue.bind(this, this.annotation.annotatedFieldId, this.annotation.id);
+		},
+		stateSetter(): (payload: Partial<AnnotationValue> & { id: string }) => void {
+			return this.simple ? PatternStore.actions.simple : PatternStore.actions.extended.annotation;
+		},
 		textDirection(): string|undefined {
 			// only set direction if this is the main annotation
 			// so we don't set rtl mode on things like part-of-speech etc.
@@ -139,14 +151,14 @@ export default Vue.extend({
 		options(): Option[] { return this.annotation.values || []; },
 
 		autocomplete(): boolean { return this.annotation.uiType === 'combobox'; },
-		autocompleteUrl(): string { return paths.autocompleteAnnotation(CorpusStore.getState().id, this.annotation.annotatedFieldId, this.annotation.id); },
+		autocompleteUrl(): string { return blacklabPaths.autocompleteAnnotation(INDEX_ID, this.annotation.annotatedFieldId, this.annotation.id); },
 
 		value: {
 			get(): string {
-				return PatternStore.get.annotationValue(this.annotation.annotatedFieldId, this.annotation.id).value;
+				return this.stateGetter().value;
 			},
 			set(value: string) {
-				PatternStore.actions.extended.annotation({
+				this.stateSetter({
 					id: this.annotation.id,
 					value
 				});
@@ -154,10 +166,10 @@ export default Vue.extend({
 		},
 		caseSensitive: {
 			get(): boolean {
-				return PatternStore.get.annotationValue(this.annotation.annotatedFieldId, this.annotation.id).case;
+				return this.stateGetter().case;
 			},
 			set(caseSensitive: boolean) {
-				PatternStore.actions.extended.annotation({
+				this.stateSetter({
 					id: this.annotation.id,
 					case: caseSensitive
 				});
