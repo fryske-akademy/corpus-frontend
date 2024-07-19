@@ -13,16 +13,17 @@ import java.util.List;
 import java.util.Optional;
 import java.util.logging.Logger;
 
-import javax.servlet.ServletException;
-import javax.servlet.http.Cookie;
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.Cookie;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 
 import org.apache.commons.lang3.StringUtils;
 import org.apache.velocity.Template;
 import org.apache.velocity.VelocityContext;
 import org.apache.velocity.app.event.EventCartridge;
 import org.apache.velocity.app.event.ReferenceInsertionEventHandler;
+import org.apache.velocity.context.Context;
 import org.apache.velocity.tools.generic.DateTool;
 import org.apache.velocity.tools.generic.EscapeTool;
 
@@ -159,7 +160,7 @@ public abstract class BaseResponse {
                  * @param value the resolved value
                  */
                 @Override
-                public Object referenceInsert(String expression, Object value) {
+                public Object referenceInsert(Context context, String expression, Object value) {
                     boolean escape = !expression.toLowerCase().contains("unescaped");
                     String val = value != null ? value.toString() : "";
 
