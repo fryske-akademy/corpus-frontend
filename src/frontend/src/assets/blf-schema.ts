@@ -377,14 +377,8 @@ type CorpusConfig = {
 }
 
 type AnnotationGroup = {
-	/** Group name */
 	name: string;
-	/** IDs of annotations in this group. */
 	annotations: string[];
-	/**
-	 * Add all annotations not in any other group. Only one group should have this. Defaults to false.
-	 * If you have no group that defines this, BlackLab will make one for you.
-	 */
 	addRemainingAnnotations?: boolean;
 }
 
@@ -394,10 +388,7 @@ type MetadataFieldGroup = {
 	name: string;
 	/** Metadata fields in this group */
 	fields: string[];
-	/**
-	 * Add all annotations not in any other group. Only one group should have this. Defaults to false.
-	 * If you have no group that defines this, BlackLab will make one for you.
-	 */
+	/** Add all fields not in any other group. Only one group should have this. Defaults to false. */
 	addRemainingFields?: boolean;
 }
 

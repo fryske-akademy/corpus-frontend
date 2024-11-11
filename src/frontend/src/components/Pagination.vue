@@ -14,7 +14,6 @@
 		</template>
 		<li v-if="lowerPages.length || higherPages.length" :class="{
 			current: pageActive,
-			active: pageActive,
 			disabled
 		}">
 			<template v-if="editable">

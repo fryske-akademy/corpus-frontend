@@ -18,7 +18,9 @@ import { mapReduce } from '@/utils';
 import { getFilterString, getFilterSummary, valueFunctions } from '@/components/filters/filterValueFunctions';
 
 export type FilterState = {
+	// lucene: string|null;
 	value: any|null;
+	// summary: string|null;
 };
 
 export type FullFilterState = FilterDefinition<any, any>&FilterState;
@@ -115,12 +117,6 @@ const actions = {
 			return;
 		}
 
-		// Backwards compat: we renamed these fields but not all extension scripts are upt-to-date
-		//@ts-ignore
-		filter.defaultDisplayName = filter.defaultDisplayName || filter.displayName;
-		//@ts-ignore
-		filter.defaultDescription = filter.defaultDescription || filter.description;
-
 		Vue.set<FullFilterState>(state.filters, filter.id, {...filter, value: null});
 	}, 'registerFilter'),
 
@@ -184,8 +180,8 @@ const init = () => {
 			actions.registerFilter({
 				filter: {
 					componentName,
-					defaultDescription: f.defaultDescription,
-					defaultDisplayName: f.defaultDisplayName,
+					description: f.description,
+					displayName: f.displayName,
 					groupId: g.id,
 					id: f.id,
 					metadata,

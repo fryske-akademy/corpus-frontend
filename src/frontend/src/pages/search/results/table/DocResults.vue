@@ -7,7 +7,6 @@
 
 		<slot name="groupBy"/>
 		<slot name="pagination"/>
-		<slot name="annotation-switcher"/>
 
 		<DocsTable
 			:mainAnnotation="mainAnnotation"
@@ -64,7 +63,7 @@ export default Vue.extend({
 		showDocumentHits: false
 	}),
 	computed: {
-		mainAnnotation(): CorpusStore.NormalizedAnnotation { return CorpusStore.get.allAnnotationsMap()[UIStore.getState().results.shared.concordanceAnnotationId]; },
+		mainAnnotation(): CorpusStore.NormalizedAnnotation { return CorpusStore.get.firstMainAnnotation(); },
 		/** explicitly shown metadata fields + whatever field is currently being sorted on (if any). */
 		metadata(): NormalizedMetadataField[]|undefined {
 			const sortMetadataFieldMatch = this.sort && this.sort.match(/^-?field:(.+)$/);
@@ -83,12 +82,7 @@ export default Vue.extend({
 			return this.results.docs.map(doc => {
 				return {
 					doc,
-					href: getDocumentUrl(
-						doc.docPid,
-						this.results.summary.pattern?.fieldName ?? '',
-						undefined,
-						this.results.summary.searchParam.patt || undefined,
-						this.results.summary.searchParam.pattgapdata || undefined),
+					href: getDocumentUrl(doc.docPid, this.results.summary.searchParam.patt || undefined, this.results.summary.searchParam.pattgapdata || undefined),
 					summary: getDocumentSummary(doc.docInfo, specialFields),
 					type: 'doc'
 				};

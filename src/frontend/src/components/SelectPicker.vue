@@ -71,7 +71,7 @@
 			<span v-else-if="!showValues && multiple && showValueCount" :class="['menu-icon badge',{'active': displayValues.length}]">
 				{{displayValues.length || totalOptionCount}}
 			</span>
-			<span :class="['menu-icon', 'menu-caret', 'fa', 'fa-caret-down', {
+			<span :class="['menu-icon', 'fa', 'fa-caret-down', {
 				//'fa-rotate-180': isOpen
 				'fa-flip-vertical': isOpen
 			}]"></span>
@@ -139,7 +139,6 @@
 						:class="{
 							'menu-option': true,
 							'active': !multiple && internalModel[o.value],
-							'checked': multiple && internalModel[o.value],
 							'disabled': o.disabled,
 						}"
 						:key="o.id"
@@ -425,10 +424,7 @@ export default Vue.extend({
 
 		///////////////
 
-		displayValues(): string[] {
-			return Object.keys(this.internalModel)
-					.map(k => this.uiOptionsMap[k] /* check first - might be unknown value */ ? this.uiOptionsMap[k].label : k);
-		},
+		displayValues(): string[] { return Object.keys(this.internalModel).map(k => this.uiOptionsMap[k] /* check first - might be unknown value */ ? this.uiOptionsMap[k].label : k); },
 		computedMenuClass(): any {
 			return {
 				[(this as any).dataMenuWidth]: ['grow', 'shrink', 'stretch'].includes((this as any).dataMenuWidth),
@@ -1078,18 +1074,13 @@ export default Vue.extend({
 		&.active {
 			background: #337ab7;
 			color: white;
-			font-weight: bold;
 			.text-muted { color :white; }
 		}
-		&.checked {
-			font-weight: bold;
-		}
-		&.active.disabled,
-		&.checked.disabled {
+		&.active.disabled {
 			opacity: .65;
 		}
 
-		&:not(.active):not(.disabled):not(.checked) {
+		&:not(.active):not(.disabled) {
 			&:hover,
 			&:focus,
 			&:active {

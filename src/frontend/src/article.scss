@@ -2,13 +2,11 @@
 
 .hl {
 	font-weight: bold;
-	background-color: #e4ebef; //#ffe1bc;
-	color: #464646;
+	color: #b10932;
 
 	&.active {
-		/*text-decoration: underline;*/
-		color: #fff;
-		background-color: #337ab7;
+		text-decoration: underline;
+		background: #FFF;
 	}
 }
 

@@ -14,9 +14,8 @@ import Vue from 'vue';
 // @ts-ignore
 import {ReactiveDepTree} from '@/../node_modules/reactive-dep-tree/dist/reactive-dep-tree.umd.js';
 import {HitRowData} from '@/pages/search/results/table/HitRow.vue';
-import { BLHit, BLHitSnippetPart, BLMatchInfoRelation } from '@/types/blacklabtypes';
+import { BLHit, BLHitSnippetPart, BLRelationMatchRelation } from '@/types/blacklabtypes';
 import Spinner from '@/components/Spinner.vue';
-import { NormalizedAnnotation } from '@/types/apptypes';
 
 
 /* https://universaldependencies.org/format.html
@@ -84,8 +83,8 @@ export default Vue.extend({
 
 		// TODO
 		dir: String as () => 'ltr'|'rtl',
-		mainAnnotation: Object as () => NormalizedAnnotation,
-		otherAnnotations: Object as () => Record<'lemma'|'upos'|'xpos'|'feats', NormalizedAnnotation|null>,
+		mainAnnotation: String,
+		otherAnnotations: Object as () => Record<'lemma'|'upos'|'xpos'|'feats', string>,
 	},
 	data: () => ({
 		renderTree: true,
@@ -106,15 +105,11 @@ export default Vue.extend({
 		sensibleArray(): undefined|Array<Record<string, string>> {
 			if (!this.context?.matchInfos) return undefined;
 			/** Which annotations are we interested in, punct and the main annotation, but maybe more. */
-			const extract = ['punct', this.mainAnnotation.id].concat(Object.values(this.otherAnnotations).filter((a): a is NormalizedAnnotation => !!a).map(a => a.id));
+			const extract = ['punct', this.mainAnnotation].concat(Object.values(this.otherAnnotations));
 			const {left, match, right} =  this.context;
 			return flatten(left, extract).concat(flatten(match, extract)).concat(flatten(right, extract));
 		},
 
-		/**
-		 * Convert BlackLab's returned relation object into something representing connl-u relations.
-		 * Meaning a list of "tokens" (i.e. positions in the sentence), pointing at their parent ("sourceIndex" property).
-		 */
 		relationInfo(): undefined|Array<undefined|{parentIndex: number; label: string;}> {
 			if (!this.hit || !this.context || !this.sensibleArray) return undefined;
 
@@ -123,8 +118,8 @@ export default Vue.extend({
 			const indexOffset = start - leftLength;
 
 			const r: Array<{parentIndex: number;label: string;}> = [];
-			const doRelation = (v: BLMatchInfoRelation) => {
-				// CoNNL-U can only have one parent, so skip if the relation is not one-to-one
+			const doRelation = (v: BLRelationMatchRelation) => {
+				// Connlu can only have one parent, so skip if the relation is not one-to-one
 				if (!(v.targetEnd - v.targetStart > 1) && (v.sourceStart == null || !(v.sourceEnd! - v.sourceStart > 1))) {
 					// translate the indices to something that makes sense
 					const sourceIndex = v.sourceStart != null ? v.sourceStart - indexOffset : -1; // 0 signifies root.
@@ -134,7 +129,10 @@ export default Vue.extend({
 					r[targetIndex] = {
 						// might be undefined for root?
 						parentIndex: sourceIndex,
+						//@ts-ignore
 						label: v.relType,
+						// @ts-ignore
+						sourceObject: v
 					}
 				}
 			}
@@ -171,15 +169,15 @@ export default Vue.extend({
 
 				// omit punctuation before first word of sentence.
 				if (i !== 0) header = header + token.punct;
-				header += token[this.mainAnnotation.id];
+				header += token[this.mainAnnotation];
 
 				const row = [] as string[];
 				row.push((1+i).toString()); // index
-				row.push(token[this.mainAnnotation.id]); // form (usually word)
-				if (this.otherAnnotations.lemma) row.push(token[this.otherAnnotations.lemma.id]); else row.push('_'); // lemma
-				if (this.otherAnnotations.upos)  row.push(token[this.otherAnnotations.upos.id]);  else row.push('_'); // upos
-				if (this.otherAnnotations.xpos)  row.push(token[this.otherAnnotations.xpos.id]);  else row.push('_'); // xpos
-				if (this.otherAnnotations.feats) row.push(token[this.otherAnnotations.feats.id]); else row.push('_'); // feats
+				row.push(token[this.mainAnnotation]); // form
+				if (this.otherAnnotations.lemma) row.push(token[this.otherAnnotations.lemma]); else row.push('_'); // lemma
+				if (this.otherAnnotations.upos)  row.push(token[this.otherAnnotations.upos]);  else row.push('_'); // upos
+				if (this.otherAnnotations.xpos)  row.push(token[this.otherAnnotations.xpos]);  else row.push('_'); // xpos
+				if (this.otherAnnotations.feats) row.push(token[this.otherAnnotations.feats]); else row.push('_'); // feats
 				row.push(rel && rel.parentIndex < this.sensibleArray!.length  ? (rel.parentIndex + 1).toString() : '_'); // head
 				row.push(rel ? rel.label : '_'); // deprel
 				row.push('_'); // deps

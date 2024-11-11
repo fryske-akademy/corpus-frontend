@@ -8,7 +8,7 @@
 		<Debug v-else><label>(id: {{id}})</label></Debug>
 		<div class="col-xs-4">
 			<input type="text"
-				:placeholder="$t('filter.range.from')"
+				placeholder="From"
 				class="form-control"
 				autocomplete="off"
 
@@ -20,7 +20,7 @@
 		</div>
 		<div class="col-xs-4">
 			<input type="text"
-				:placeholder="$t('filter.range.to')"
+				placeholder="To"
 				class="form-control"
 				autocomplete="off"
 
@@ -29,9 +29,6 @@
 
 				@input="e_input({low: value.low, high: $event.target.value})"
 			>
-		</div>
-		<div class="col-xs-12" v-if="description">
-			<small class="text-muted description"><em>{{ description }}</em></small>
 		</div>
 	</div>
 </template>

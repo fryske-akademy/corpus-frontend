@@ -38,7 +38,7 @@
 						<template v-else>{{$t('results.table.loadMoreConcordances')}}</template>
 					</button>
 
-					<button type="button" class="close close-concordances" :title="$t('results.table.close').toString()" @click="$emit('close')"><span>&times;</span></button>
+					<button type="button" class="close close-concordances" :title="$t('results.table.close')" @click="$emit('close')"><span>&times;</span></button>
 				</div>
 
 			</div>
@@ -54,7 +54,7 @@ import PaginatedGetter from '@/pages/search/results/table/ConcordanceGetter';
 import {blacklab} from '@/api';
 import { BLSearchParameters, BLHitResults, BLDocResults } from '@/types/blacklabtypes';
 
-import HitsTable, {HitRows} from '@/pages/search/results/table/HitsTable.vue'
+import HitsTable, {HitRowData} from '@/pages/search/results/table/HitsTable.vue'
 import DocsTable, {DocRowData} from '@/pages/search/results/table/DocsTable.vue';
 import { NormalizedAnnotation, NormalizedMetadataField } from '@/types/apptypes';
 import { GroupRowData } from '@/pages/search/results/table/GroupTable.vue';
@@ -71,10 +71,10 @@ export default Vue.extend({
 	},
 	props: {
 		query: Object as () => BLSearchParameters,
-		/** Are we inside the docResults or hitResults. Not great. */
 		type: String as () => 'hits'|'docs',
 		data: Object as () => GroupRowData,
 
+		// query: Object as () => BLSearchParameters,
 		mainAnnotation: Object as () => NormalizedAnnotation,
 		otherAnnotations: Array as () => NormalizedAnnotation[]|undefined,
 		metadata: Array as () => NormalizedMetadataField[]|undefined,
@@ -85,7 +85,7 @@ export default Vue.extend({
 		open: Boolean
 	},
 	data: () => ({
-		concordances: null as any as PaginatedGetter<HitRows|DocRowData>,
+		concordances: null as any as PaginatedGetter<HitRowData|DocRowData>,
 	}),
 	methods: {
 		frac2Percent
@@ -94,7 +94,7 @@ export default Vue.extend({
 		const getDocumentSummary = UIStore.getState().results.shared.getDocumentSummary;
 		const fieldInfo = CorpusStore.getState().corpus!.fieldInfo;
 
-		this.concordances = new PaginatedGetter<HitRows|DocRowData>((first, number) => {
+		this.concordances = new PaginatedGetter<HitRowData|DocRowData>((first, number) => {
 			// make a copy of the parameters so we don't clear them for all components using the summary
 			const requestParameters: BLSearchParameters = Object.assign({}, this.query, {
 				// Do not clear sample/samplenum/samplecount,
@@ -109,40 +109,22 @@ export default Vue.extend({
 				let {request, cancel} = blacklab.getHits(INDEX_ID, requestParameters);
 				return {
 					cancel,
-					request: request.then((r: BLHitResults) => {
+					request: request.then((r: BLHitResults) => r.hits.map<HitRowData>(h => {
 						const colors = getHighlightColors(r.summary);
-						return r.hits.map<HitRows>(h => {
-							UIStore.getState().results.shared.transformSnippets?.(h);
-							return  {
-								type: 'hit',
-								doc: {docInfo: r.docInfos[h.docPid], docPid: h.docPid},
-								rows: [{
-									// Don't bother with parallel results when expanding a group.
-									// When the user wants to see them, they can open the full concordances.
-									annotatedField: undefined,
-									isForeign: false,
-									hit: h,
-									context: snippetParts(h, this.mainAnnotation.id, this.dir, colors),
-									href: getDocumentUrl(
-										h.docPid,
-										this.query.field ?? '',
-										undefined,
-										this.query.patt || undefined,
-										this.query.pattgapdata || undefined,
-										h.start
-									),
-									doc: {
-										docInfo: r.docInfos[h.docPid],
-										docPid: h.docPid,
-									},
-									gloss_fields: [],
-									hit_first_word_id: '',
-									hit_id: '',
-									hit_last_word_id: '',
-								}]
-							}
-						})
-					})
+						return {
+							type: 'hit',
+							hit: h,
+							context: snippetParts(h, this.mainAnnotation.id, this.dir, colors),
+							doc: {
+								docInfo: r.docInfos[h.docPid],
+								docPid: h.docPid,
+							},
+							gloss_fields: [],
+							hit_first_word_id: '',
+							hit_id: '',
+							hit_last_word_id: '',
+						}
+					}))
 				}
 			} else {
 				let {request, cancel} = blacklab.getDocs(INDEX_ID, requestParameters);
@@ -151,12 +133,7 @@ export default Vue.extend({
 					request: request.then((r: BLDocResults) => r.docs.map<DocRowData>(doc => ({
 						type: 'doc',
 						doc,
-						href: getDocumentUrl(
-							doc.docPid,
-							this.query.field ?? '',
-							undefined,
-							this.query.patt || undefined,
-							this.query.pattgapdata || undefined),
+						href: getDocumentUrl(doc.docPid, this.query.patt || undefined, this.query.pattgapdata || undefined),
 						summary: getDocumentSummary(doc.docInfo, fieldInfo)
 					})))
 				}
@@ -165,7 +142,7 @@ export default Vue.extend({
 	},
 	watch: {
 		open() {
-			if (this.open && !this.concordances.done && !this.concordances.loading && !this.concordances.results.length) this.concordances.next();
+			if (this.open && !this.concordances.done) this.concordances.next();
 		}
 	}
 });

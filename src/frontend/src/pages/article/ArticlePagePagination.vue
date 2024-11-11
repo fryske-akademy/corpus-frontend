@@ -1,24 +1,20 @@
 <template>
-	<div v-if="shouldRender" :class="['article-pagination', ready ? '' : 'loading']" title="Hold to drag">
-		<template v-if="paginationInfo">
-			<div class="pagination-container">
-				<label style="white-space: nowrap;">Page</label>
+	<div v-if="shouldRender" :class="['article-pagination', shouldRender && loading && 'loading']">
+		<span v-if="loading" class="fa fa-spinner fa-spin fa-4x"></span>
+		<template v-else>
+			<div v-if="paginationInfo" class="pagination-container">
+				<label>Pages</label>
 				<div class="pagination-wrapper">
-					<Pagination v-bind="paginationInfo" :editable="false" :showOffsets="false" @change="handlePageNavigation"/><br>
+					<Pagination v-bind="paginationInfo" :editable="false" :showOffsets="false" @change="handlePageNavigation"/>
 				</div>
 			</div>
-			<hr v-if="hitInfo || loadingForAwhile">
-		</template>
-
-		<div v-if="hitInfo" class="pagination-container">
-			<label>Hit</label>
-			<div class="pagination-wrapper">
-				<Pagination v-bind="hitInfo" :editable="false" :showOffsets="false" @change="handleHitNavigation"/><br>
+			<hr v-if="hitInfo && paginationInfo != null">
+			<div v-if="hitInfo" class="pagination-container">
+				<label>Hits</label>
+				<div class="pagination-wrapper">
+					<Pagination v-bind="hitInfo" :editable="false" :showOffsets="false" @change="handleHitNavigation"/>
+				</div>
 			</div>
-		</div>
-		<template v-else-if="loadingForAwhile">
-			<Spinner size="20"/>
-			<label>Loading hits...</label>
 		</template>
 	</div>
 </template>
@@ -32,42 +28,37 @@ import { blacklab } from '@/api';
 import { BLHitResults } from '@/types/blacklabtypes';
 
 import Pagination from '@/components/Pagination.vue';
-import { debugLogCat } from '@/utils/debug';
-import { binarySearch } from '@/utils';
-
-import Spinner from '@/components/Spinner.vue';
-
-import 'jquery-ui';
-import 'jquery-ui/ui/widgets/draggable';
-
 
 // NOTE: wordend in blacklab parameters is exclusive (wordstart=0 && wordend=100 returns words at index 0-99)
 
 // NOTE: this is a ugly piece of code, but hey it works /shrug
 export default Vue.extend({
-	components: { Pagination, Spinner },
+	components: { Pagination },
 	data: () => ({
 		hits: null as null|Array<[number, number]>,
 		hitElements: [...document.querySelectorAll('.hl')] as HTMLElement[],
-		/** Set during init. */
 		currentHitInPage: undefined as number|undefined,
 		loadingForAwhile: false,
-		pageSize: PAGE_SIZE,
-
-		PAGE_START,
-		PAGE_END
+		pageSize: PAGE_SIZE
 	}),
 	computed: {
-		ready(): boolean { return !!this.hits; },
-		shouldRender(): boolean { return !!(this.loadingForAwhile || this.paginationInfo || this.hitInfo); },
-
-		firstVisibleHitIndex(): number {
-			if (!this.ready) { return 0; }
-			const firstVisibleHitIndex = this.hits!.findIndex(([start, end]) => start >= PAGE_START);
-			return firstVisibleHitIndex >= 0 ? firstVisibleHitIndex : this.hits!.length - 1;
+		shouldRender(): boolean {
+			return (this.loadingForAwhile || (this.hits != null && this.hits.length > 0)) || // hits portion
+			(PAGINATION_ENABLED && (PAGE_END - PAGE_START) < DOCUMENT_LENGTH)
+			// return PAGINATION_ENABLED;
 		},
 
-		currentHitIndex(): number|undefined { return this.currentHitInPage != null ? (this.firstVisibleHitIndex + this.currentHitInPage) : undefined; },
+		loading(): boolean { return this.hits == null; },
+
+		currentPageInfo(): {wordstart: number, wordend: number} {
+			return {wordstart: PAGE_START, wordend: PAGE_END};
+		},
+		firstVisibleHitIndex(): number {
+			if (this.loading || !PAGINATION_ENABLED) { return 0; }
+			const firstVisibleHitIndex = this.hits!.findIndex(([start, end]) => start >= this.currentPageInfo.wordstart);
+			return firstVisibleHitIndex >= 0 ? firstVisibleHitIndex : this.hits!.length - 1;
+		},
+		currentHitIndex(): number|undefined { return this.currentHitInPage ? (this.firstVisibleHitIndex + this.currentHitInPage) : undefined; },
 
 		paginationInfo(): undefined|{
 			page: number,
@@ -76,17 +67,13 @@ export default Vue.extend({
 			disabled: boolean,
 			pageActive: boolean
 		} {
-			// Don't bother if we're showing the entire document
-			if (PAGE_START <= 0 && PAGE_END >= DOCUMENT_LENGTH) {
-				return undefined;
-			}
+			if (this.loading || !PAGINATION_ENABLED) { return undefined; }
 
-			// It can happen we're not showing a page as intended, but showing a larger or smaller part.
-			// (if the user edited the url manually for example)
-			// We reflect this in the pagination widget
-			const isOnExactPage = (PAGE_START % PAGE_SIZE!) === 0 && (PAGE_END === (PAGE_START + PAGE_SIZE!) || PAGE_END === DOCUMENT_LENGTH)
+			const {wordstart, wordend} = this.currentPageInfo;
+
+			const isOnExactPage = (wordstart % PAGE_SIZE!) === 0 && (PAGE_END === (PAGE_START + PAGE_SIZE!) || PAGE_END === DOCUMENT_LENGTH)
 			return {
-				page: Math.floor(PAGE_START / PAGE_SIZE!),
+				page: Math.floor(this.currentPageInfo.wordstart / PAGE_SIZE!),
 				maxPage: Math.floor(DOCUMENT_LENGTH / PAGE_SIZE!),
 				minPage: 0,
 				disabled: false,
@@ -100,12 +87,11 @@ export default Vue.extend({
 			disabled: boolean,
 			pageActive: boolean
 		} {
-			if (!this.ready) { return undefined; }
-			if (this.hits!.length <= 1) return undefined;
+			if (this.loading || !this.hits || !this.hits.length) { return undefined; }
 
 			const isOnHit = this.currentHitInPage != null;
 			return {
-				page: this.currentHitIndex || 0,
+				page: this.currentHitIndex != null ? this.currentHitIndex : this.firstVisibleHitIndex,
 				maxPage: this.hits!.length-1,
 				minPage: 0,
 				disabled: false,
@@ -114,15 +100,13 @@ export default Vue.extend({
 		},
 	},
 	methods: {
-		/** Navigate to the page with specific index. Optionally to a specific hit within the page. (The hit number should be the index of the hit in the new page. I.e 0 for the first hit on that page) */
 		handlePageNavigation(page: number, hit?: number) {
 			let wordstart: number|undefined = page * PAGE_SIZE!;
 			let wordend: number|undefined = (page + 1) * PAGE_SIZE!;
 			if (wordstart <= 0) { wordstart = undefined; }
 			if (wordend >= DOCUMENT_LENGTH) { wordend = undefined; }
 
-			const newUrl = new URI().setSearch({wordstart, wordend, findhit: undefined}).fragment(hit ? hit.toString() : '').toString();
-			debugLogCat('history', `Setting window.location.href to ${newUrl}`);
+			const newUrl = new URI().setSearch({wordstart, wordend}).fragment(hit != null ? hit.toString(10): '').toString();
 			window.location.href = newUrl;
 		},
 		handleHitNavigation(index: number) {
@@ -158,19 +142,8 @@ export default Vue.extend({
 	},
 	watch: {
 		currentHitInPage() {
-			const url = window.location.pathname + window.location.search + (this.currentHitInPage == null ? '' : `#${this.currentHitInPage.toString(10)}`);
-			debugLogCat('history', `Calling replaceState with URL: ${url}`);
-			window.history.replaceState(undefined, '', url);
+			window.history.replaceState(undefined, '', window.location.pathname + window.location.search + (this.currentHitInPage == null ? '' : `#${this.currentHitInPage.toString(10)}`));
 		},
-	},
-	mounted() {
-		this.$forceUpdate(); // updated() sometimes not called?
-	},
-	updated() {
-		if (this.$el && this.$el.nodeType === 1) { // sometimes it's a comment if our top v-if is false.
-			//@ts-ignore
-			$(this.$el).draggable();
-		}
 	},
 	created() {
 		// There are two ways the url can contain a reference to a specific hit we should outline/scroll to
@@ -183,9 +156,7 @@ export default Vue.extend({
 		// otherwise just remove the window hash
 		if (!this.hitElements.length) {
 			this.currentHitInPage = undefined;
-			const url = window.location.pathname + window.location.search;
-			debugLogCat('history', `Calling replaceState with URL: ${url}`);
-			window.history.replaceState(undefined, '', url); // setting hash to '' won't remove '#'
+			window.history.replaceState(undefined, '', window.location.pathname + window.location.search); // setting hash to '' won't remove '#'
 		} else {
 			let hitInPage = Number(window.location.hash ? window.location.hash.substring(1) : '0') || 0;
 			if (hitInPage >= this.hitElements.length || hitInPage < 0) {
@@ -198,43 +169,24 @@ export default Vue.extend({
 		}
 
 
-		// case 2: the ?findhit parameter
-		// we need to request all hits from blacklab for this
-		//   (but we need these anyway, so we know how many hits there are and where, for navigating through them)
+		// now request all hits from blacklab, we need this to solve the second case with the ?findhit parameter, but also so we know whether there are more hits
+		// outside this page (so we can navigate the user there).
 
 
 		// Load all hits in the document (also those outside this page)
 		// @ts-ignore
-		const { query, field, searchfield }: {
-			query: string|undefined,
-			field: string|undefined,
-			searchfield: string|undefined, // override in parallel corpus (e.g. show contents from field a; search starts from field B)
-		} = new URI().search(true);
+		const { query }: { query: string|undefined } = new URI().search(true);
 
 		if (!query) { // no hits when no query, abort
 			this.hits = [];
 			return;
 		}
 
-		/**
-		 * Optionally request hits from a specific target field (parallel corpora).
-		 *
-		 * This is done by adding <code>rfield(..., targetField)</code> to the query.
-		 */
-		function optTargetField(query?: string, targetfield?: string) {
-			if (query && targetfield) {
-				const f = targetfield.replace(/'/g, "\\'");
-				return "rfield(" + query + ", '" + f + "')";
-			}
-			return query;
-		}
-
 		const spinnerTimeout = setTimeout(() => this.loadingForAwhile = true, 3000);
 		blacklab
 		.getHits(INDEX_ID, {
 			docpid: DOCUMENT_ID,
-			field: searchfield ?? field,
-			patt: optTargetField(query, searchfield ? field : undefined),
+			patt: query,
 			first: 0,
 			number: Math.pow(2, 31)-1,
 			context: 0,
@@ -244,24 +196,24 @@ export default Vue.extend({
 		.then((r: BLHitResults) => r.hits.map(h => [h.start, h.end] as [number, number]))
 		.then(hits => {
 			// if specific hit passed from the previous page, find it in this page
-			let findHit: number = Number(new URI().search(true).findhit);
+			let findHit: string|undefined|number = new URI().search(true).findhit as string|undefined;
+			if (findHit != null) {
+				findHit = Number(findHit);
 
-			if (!isNaN(findHit)) {
-				// binary search to find the hit:
-				const index = binarySearch(hits, h => findHit - h[0]);
-
-				if (index >= 0) {
-					let firstVisibleHitIndex = Math.abs(binarySearch(hits, h => PAGE_START - h[0]));
-					if (this.currentHitInPage != null) {
-						this.hitElements[this.currentHitInPage].classList.remove('active');
+				if (!isNaN(Number(findHit))) {
+					const index = hits.findIndex(hit => hit[0] === findHit);
+					if (index >= 0) {
+						const firstVisibleHitIndex = hits.findIndex(([start, end]) => start >= this.currentPageInfo.wordstart);
+						if (this.currentHitInPage != null) {
+							this.hitElements[this.currentHitInPage].classList.remove('active');
+						}
+						this.currentHitInPage = index - firstVisibleHitIndex;
+						this.hitElements[this.currentHitInPage].classList.add('active');
+						this.hitElements[this.currentHitInPage].scrollIntoView({block: 'center', inline: 'center'});
 					}
-					this.currentHitInPage = index - firstVisibleHitIndex;
-					this.hitElements[this.currentHitInPage].classList.add('active');
-					this.hitElements[this.currentHitInPage].scrollIntoView({block: 'center', inline: 'center'});
 				}
+				window.history.replaceState(undefined, '', new URI().removeSearch('findhit').toString());
 			}
-			window.history.replaceState(undefined, '', new URI().removeSearch('findhit').toString());
-
 
 			this.hits = hits;
 		})
@@ -272,10 +224,8 @@ export default Vue.extend({
 
 <style lang="scss">
 .article-pagination {
-	&:not([style]) {
-		top: 10%;
-		right: 10%
-	}
+	top: 10%;
+	right: 10%;
 	position: fixed;
 	z-index: 1000;
 	border: 1px solid #ccc;
@@ -284,6 +234,10 @@ export default Vue.extend({
 	border-radius: 3px;
 
 	padding: 5px;
+
+	&.loading {
+		border-radius: 50%;
+	}
 
 	> hr {
 		margin: 5px 0;
@@ -311,5 +265,4 @@ export default Vue.extend({
 		}
 	}
 }
-
 </style>

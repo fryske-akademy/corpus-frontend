@@ -18,13 +18,12 @@ const settings = {
 	withCredentials: WITH_CREDENTIALS,
 };
 
-// Simulate a delay on an AxiosResponse/Error by returning a
-// Promise that will resolve after settings.delay ms
 export function delayResponse<T>(r: AxiosResponse<T>): Promise<AxiosResponse<T>> {
 	return new Promise((resolve, reject) => {
 		setTimeout(() => resolve(r), settings.delay);
 	});
 }
+
 export function delayError(e: AxiosError): Promise<AxiosResponse<never>> {
 	return new Promise((resolve, reject) => {
 		setTimeout(() => reject(e), settings.delay);
@@ -44,7 +43,7 @@ export async function handleError(error: AxiosError): Promise<never> {
 	if (!response) {
 		return Promise.reject(new ApiError(
 			error.message,
-			'Could not connect to server at ' + new URL(error.config.url || '', error.config.baseURL),
+			'Could not connect to server at ' + error.config.url,
 			'Server Offline',
 			undefined
 		));

@@ -3,8 +3,8 @@ import memoize from 'memoize-decorator';
 import BaseUrlStateParser from '@/store/util/url-state-parser-base';
 import LuceneQueryParser from 'lucene-query-parser';
 
-import {mapReduce, decodeAnnotationValue, uiTypeSupport, getCorrectUiType, unparenQueryPart, getParallelFieldName} from '@/utils';
-import {parseBcql, Attribute, Result, Token} from '@/utils/bcql-json-interpreter';
+import {mapReduce, decodeAnnotationValue, uiTypeSupport, getCorrectUiType} from '@/utils';
+import parseCql, {Attribute} from '@/utils/cqlparser';
 import parseLucene from '@/utils/luceneparser';
 import {debugLog} from '@/utils/debug';
 
@@ -48,11 +48,7 @@ export default class UrlStateParser extends BaseUrlStateParser<HistoryModule.His
 	}
 
 	@memoize
-	public async get(): Promise<HistoryModule.HistoryEntry> {
-
-		// Make sure our parsed cql is up to date (used to be a memoized getter, but we need it to be async)
-		await this.updateParsedCql(this.getString('patt', null, v => v ? v : null));
-
+	public get(): HistoryModule.HistoryEntry {
 		return {
 			explore: this.explore,
 			filters: this.filters,
@@ -127,7 +123,7 @@ export default class UrlStateParser extends BaseUrlStateParser<HistoryModule.His
 	 */
 	@memoize
 	private get frequencies(): null|ExploreModule.ModuleRootState['frequency'] {
-		if (this.expertPattern.query !== '[]' || this.groupBy.length !== 1) {
+		if (this.expertPattern !== '[]' || this.groupBy.length !== 1) {
 			return null;
 		}
 
@@ -137,7 +133,7 @@ export default class UrlStateParser extends BaseUrlStateParser<HistoryModule.His
 		}
 
 		const annotationId = group.substring(4);
-		if (!CorpusModule.get.allAnnotationsMap().hasOwnProperty(annotationId)) {
+		if (!CorpusModule.get.annotationDisplayNames().hasOwnProperty(annotationId)) {
 			return null;
 		}
 
@@ -175,9 +171,9 @@ export default class UrlStateParser extends BaseUrlStateParser<HistoryModule.His
 				ui.patternMode = 'simple';
 			} else if ((Object.keys(this.extendedPattern.annotationValues).length > 0) && !hasGapValue) {
 				ui.patternMode = 'extended';
-			} else if (this.advancedPattern.query && !hasGapValue && UIModule.getState().search.advanced.enabled) {
+			} else if (this.advancedPattern && !hasGapValue && UIModule.getState().search.advanced.enabled) {
 				ui.patternMode = 'advanced';
-			} else if (this.expertPattern.query) {
+			} else if (this.expertPattern) {
 				ui.patternMode = 'expert';
 			} else {
 				ui.patternMode = hasFilters ? hasGapValue ? 'expert' : 'extended' : 'simple';
@@ -233,7 +229,7 @@ export default class UrlStateParser extends BaseUrlStateParser<HistoryModule.His
 			return null;
 		}
 
-		if (this.expertPattern.query) {
+		if (this.expertPattern) {
 			return null;
 		}
 
@@ -265,19 +261,15 @@ export default class UrlStateParser extends BaseUrlStateParser<HistoryModule.His
 			return null;
 		}
 
-		if (this._parsedCql == null || this._parsedCql.length > 1)
-			return null; // no query, or parallel query; can't interpret as ngram
-
-		const cql = this._parsedCql[0];
+		const cql = this._parsedCql;
 		if ( // all tokens need to be very simple [annotation="value"] tokens.
 			!cql ||
 			cql.within ||
-			cql.targetVersion ||
-			cql.tokens === undefined || cql.tokens.length > ExploreModule.defaults.ngram.maxSize ||
+			cql.tokens.length > ExploreModule.defaults.ngram.maxSize ||
 			cql.tokens.find(t =>
 				t.leadingXmlTag != null ||
 				t.trailingXmlTag != null ||
-				(t.repeats != null && (t.repeats.min !== 1 || t.repeats.max !== 1)) ||
+				t.repeats != null ||
 				t.optional ||
 				(t.expression != null && (t.expression.type !== 'attribute' || t.expression.operator !== '='))
 			) != null
@@ -307,7 +299,6 @@ export default class UrlStateParser extends BaseUrlStateParser<HistoryModule.His
 	@memoize
 	private get patterns(): PatternModule.ModuleRootState {
 		return {
-			parallelFields: this.parallelFields,
 			simple: this.simplePattern,
 			extended: this.extendedPattern,
 			advanced: this.advancedPattern,
@@ -340,12 +331,8 @@ export default class UrlStateParser extends BaseUrlStateParser<HistoryModule.His
 			throw new Error('Attempting to parse url before tagset is loaded or disabled, await tagset.awaitInit() before parsing url.');
 		}
 
-		if (this._parsedCql === null) {
-			return {}; // no query; can't interpret as annotation values
-		}
-
-		const result = this._parsedCql[0];
-		if (result == null || result.tokens === undefined) {
+		const result = this._parsedCql;
+		if (result == null) {
 			return {};
 		}
 
@@ -356,7 +343,7 @@ export default class UrlStateParser extends BaseUrlStateParser<HistoryModule.His
 
 		try {
 			/**
-			 * A requirement of the PropertyFields/Annotations is that there are no gaps in the values
+			 * A requirement of the PropertyFields is that there are no gaps in the values
 			 * So a valid config is
 			 * ```
 			 * lemma: [these, are, words]
@@ -375,7 +362,7 @@ export default class UrlStateParser extends BaseUrlStateParser<HistoryModule.His
 
 			const annotationValues: {[key: string]: string[]} = {};
 			for (let i = 0; i < result.tokens.length; ++i) {
-				const token: Token = result.tokens[i];
+				const token = result.tokens[i];
 				if (token.leadingXmlTag || token.optional || token.repeats || token.trailingXmlTag) {
 					throw new Error('Token contains settings too complex for simple search');
 				}
@@ -454,42 +441,10 @@ export default class UrlStateParser extends BaseUrlStateParser<HistoryModule.His
 	}
 
 	@memoize
-	private get parallelFields() {
-		// The query typically doesn't contain the entire parallel field name.
-		// BlackLab allows passing just "en" instead of "contents__en" in some spots
-		// So we need to reconstruct the full field name from the query here.
-		const prefix = CorpusModule.get.parallelFieldPrefix();
-		const defaultAlignBy = UIModule.getState().search.shared.alignBy.defaultValue;
-
-		const parallelFieldsMap = CorpusModule.get.parallelAnnotatedFieldsMap();
-
-		// It used to be that sourceField was only the version suffix, but now it's the full field name
-		// So we need to check if the source field is a valid parallel field name, and if not, try to find the correct one
-		// For interop with legacy urls (which shouldn't be in production, but might be floating around in test docs).
-		let sourceFromUrl = this.getString('field', null, v => v ? v : null);
-		if (sourceFromUrl && !parallelFieldsMap[sourceFromUrl]) {
-			sourceFromUrl = getParallelFieldName(prefix, sourceFromUrl);
-			if (!parallelFieldsMap[sourceFromUrl]) {
-				console.info(`Invalid parallel source field name in url (${this.getString('field')}), ignoring`);
-				sourceFromUrl = null;
-			}
-		}
-
-		const result = {
-			source: sourceFromUrl,
-			targets: this._parsedCql ? this._parsedCql.slice(1).map(result => result.targetVersion ? getParallelFieldName(prefix, result.targetVersion) : '') : [],
-			alignBy: (this._parsedCql ? this._parsedCql[1]?.relationType : defaultAlignBy) ?? defaultAlignBy,
-		};
-		return result;
-	}
-
-	@memoize
-	private get simplePattern() {
+	private get simplePattern(): AnnotationValue {
 		// Simple view is just a single annotation without any within query or filters
 		// NOTE: do not use extendedPattern, as the annotation used for simple may not be available for extended searching!
-		return {
-			annotationValue: this.annotationValues[CorpusModule.get.firstMainAnnotation().id] || {}
-		};
+		return this.annotationValues[CorpusModule.get.firstMainAnnotation().id] || {};
 	}
 
 	@memoize
@@ -505,15 +460,15 @@ export default class UrlStateParser extends BaseUrlStateParser<HistoryModule.His
 		return {
 			annotationValues: parsedAnnotationValues,
 			within: this.within,
-			withinAttributes: this.withinAttributes,
 			// This is always false, it's just a checkbox that will split up the query when it's submitted, then untick itself
 			splitBatch: false
 		};
 	}
 
 	@memoize
-	private get advancedPattern() {
-		return this._parsedCql ? this.expertPattern : { query: null, targetQueries: [] };
+	private get advancedPattern(): string|null {
+		// If the pattern can't be parsed, the querybuilder can't use it either.
+		return this._parsedCql ? this.expertPattern : null;
 	}
 
 	@memoize
@@ -527,17 +482,8 @@ export default class UrlStateParser extends BaseUrlStateParser<HistoryModule.His
 	}
 
 	@memoize
-	private get expertPattern() {
-
-		// In parallel queries, if any of the queries amounts to "zero or more of any token",
-		// just leave it empty.
-		const isParallel = (this._parsedCql?.length ?? 0) > 1;
-		const optEmpty = (q: string|undefined) => isParallel && (q === undefined || q === '_' || q === '[]*') ? '' : q;
-
-		return {
-			query: this._parsedCql ? optEmpty(unparenQueryPart(this._parsedCql[0].query)) || null : null,
-			targetQueries: this._parsedCql ? this._parsedCql.slice(1).map(r => optEmpty(unparenQueryPart(r.query)) || '') : [],
-		};
+	private get expertPattern(): string|null {
+		return this.getString('patt', null, v=>v?v:null);
 	}
 
 	@memoize
@@ -591,12 +537,7 @@ export default class UrlStateParser extends BaseUrlStateParser<HistoryModule.His
 	// TODO these might become dynamic in the future, then we need extra manual checking to see if the value is even supported in this corpus
 	@memoize
 	private get within(): string|null {
-		return this._parsedCql ? this._parsedCql[0].within || null : null;
-	}
-
-	@memoize
-	private get withinAttributes(): Record<string, string> {
-		return this._parsedCql ? this._parsedCql[0].withinAttributes || {} : {};
+		return this._parsedCql ? this._parsedCql.within || null : null;
 	}
 
 	@memoize
@@ -644,36 +585,13 @@ export default class UrlStateParser extends BaseUrlStateParser<HistoryModule.His
 	// Some intermediate values
 	// ------------------------
 
-	private async updateParsedCql(bcql: string|null) {
+	@memoize
+	private get _parsedCql(): null|ReturnType<typeof parseCql> {
 		try {
-			this._parsedCql = bcql == null ? null :
-				await parseBcql(INDEX_ID, bcql, CorpusModule.get.firstMainAnnotation().id);
-			if (this._parsedCql && this._parsedCql.length === 0)
-				this._parsedCql = null;
-			if (this._parsedCql && this._parsedCql.length > 1) {
-				const relType = this._parsedCql[1].relationType;
-				// Check if this is a valid alignBy type
-				const alignBy = UIModule.getState().search.shared.alignBy.elements.find(v => v.value === relType);
-				const optional = this._parsedCql[1].optional ?? false;
-				if (!alignBy || !optional) {
-					// Not a valid align by type, or a required alignment match; just put the whole query in the first expert box
-					this._parsedCql = [
-						{
-							query: bcql || ''
-						}
-					];
-				}
-			}
+			const result = parseCql(this.expertPattern || '', CorpusModule.get.firstMainAnnotation().id);
+			return result.tokens.length > 0 ? result : null;
 		} catch (e) {
-			// Just accept that we cannot interpret it for use in the simple, extended or advanced
-			// search modes, and use the entire query for the Expert view.
-			this._parsedCql = [
-				{
-					query: bcql || ''
-				}
-			];
+			return null; // meh, can't parse
 		}
 	}
-
-	_parsedCql: Result[]|null = null;
 }

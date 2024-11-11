@@ -32,11 +32,9 @@ a,
 
 .pagination > li {
 
-	&:not(.disabled) {
-		>span,
-		>a {
-			color: $text!important;
-		}
+	>span,
+	>a {
+		color: $text!important;
 	}
 
 	&.active,
@@ -85,7 +83,6 @@ ul.nav-tabs.cf-panel-tab-header {
 	border-color: $block-border-1;
 	>.panel-heading {
 		background-color: $block-bg-1;
-		border-color: $block-border-1;
 	}
 }
 

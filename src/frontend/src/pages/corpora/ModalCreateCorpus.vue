@@ -1,5 +1,6 @@
 <template>
 	<Modal title="Create new Corpus" @close="$emit('close')" @confirm="createCorpus" closeMessage="Cancel">
+
 		<div v-if="errorMessage" class="alert alert-danger">
 			<a href="#" class="close" aria-label="close" @click="errorMessage = ''">×</a>
 			{{ errorMessage }}
@@ -34,7 +35,7 @@
 </template>
 <script lang="ts">
 import Vue from 'vue';
-import Modal from '@/components/Modal.vue';
+import Modal from './Modal.vue';
 import SelectPicker from '@/components/SelectPicker.vue';
 import { NormalizedFormat } from '@/types/apptypes';
 import { Options } from '@/components/SelectPicker.vue';

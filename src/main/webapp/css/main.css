@@ -113,30 +113,24 @@ a.ui-menu-item-wrapper {
 }
 
 @media (min-width: 768px) {
-	.navbar-logo-margin.navbar-logo-margin {
-		margin-left: 0px!important;
+	.navbar-logo-margin {
+		margin-left: 0px!important
 	}
 }
 
-.navbar-buttons {
-	white-space: nowrap;
-}
-
-.navbar-dropdown {
-	margin: 0;
-	float: none;
-}
-
 /* override bootstrap negative margin... */
-.navbar-dropdown-button {
-	margin-left: 0!important;
-	float: none;
-	padding-left: 0;
+.locale-select-button {
+   margin-left: 0!important;
+   float: none;
 }
 
 @media (min-width: 768px) {
 	.navbar-collapse {
 		flex-grow: 1;
+	}
+	.locale-select {
+		/* align when navbar wraps. */
+		margin-left: -19px;
 	}
 }
 

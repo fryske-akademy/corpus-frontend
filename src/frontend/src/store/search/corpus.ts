@@ -11,7 +11,7 @@ import * as Api from '@/api';
 
 import {RootState} from '@/store/search/';
 
-import {NormalizedIndex, NormalizedAnnotation, NormalizedMetadataField, NormalizedAnnotatedField, NormalizedMetadataGroup, NormalizedAnnotationGroup, NormalizedAnnotatedFieldParallel} from '@/types/apptypes';
+import {NormalizedIndex, NormalizedAnnotation, NormalizedMetadataField, NormalizedAnnotatedField, NormalizedMetadataGroup, NormalizedAnnotationGroup} from '@/types/apptypes';
 import { mapReduce } from '@/utils';
 import { normalizeIndex } from '@/utils/blacklabutils';
 
@@ -23,44 +23,17 @@ const b = getStoreBuilder<RootState>().module<ModuleRootState>(namespace, {corpu
 const getState = b.state();
 
 const get = {
-
-	/** List of annotated fields */
-	allAnnotatedFields: b.read((state): NormalizedAnnotatedField[] =>
-		Object.values(state.corpus?.annotatedFields ?? {}), 'allAnnotatedFields'),
-
-	/** Map of annotated fields */
-	allAnnotatedFieldsMap: b.read((state): Record<string, NormalizedAnnotatedField> =>
-		state.corpus?.annotatedFields ?? {}, 'allAnnotatedFieldsMap'),
-
-	/** Main annotated field name */
-	mainAnnotatedField: b.read((state): string =>
-		state.corpus?.mainAnnotatedField || 'contents', 'mainAnnotatedField'),
-
-	/** Is this a parallel corpus? */
-	isParallelCorpus: b.read((state): boolean =>
-		get.allAnnotatedFields().some(f => f.isParallel), 'isParallelCorpus'),
-
-	parallelAnnotatedFields: b.read((state): NormalizedAnnotatedFieldParallel[] => {
-		return get.allAnnotatedFields().filter((f): f is NormalizedAnnotatedFieldParallel => f.isParallel);
-	}, 'parallelAnnotatedFields'),
-
-	parallelAnnotatedFieldsMap: b.read((state): Record<string, NormalizedAnnotatedFieldParallel> => {
-		return mapReduce(get.parallelAnnotatedFields(), 'id');
-	}, 'parallelAnnotatedFieldsMap'),
-
-
-	/** If this is a parallel corpus, what's the parallel field prefix?
-	 *  (e.g. "contents" if there's fields "contents__en" and "contents__nl")
-	 *  There is only ever one.
-	 */
-	parallelFieldPrefix: b.read((state): string => { return get.parallelAnnotatedFields()[0]?.prefix ?? ''; }, 'parallelFieldPrefix'),
-
 	/** All annotations, without duplicates and in no specific order */
 	allAnnotations: b.read((state): NormalizedAnnotation[] => Object.values(state.corpus?.annotatedFields[state.corpus.mainAnnotatedField].annotations ?? {}), 'allAnnotations'),
-	allAnnotationsMap: b.read((): Record<string, NormalizedAnnotation> => mapReduce(get.allAnnotations(), 'id'), 'allAnnotationsMap'),
+	allAnnotationsMap: b.read((state): Record<string, NormalizedAnnotation> => mapReduce(get.allAnnotations(), 'id'), 'allAnnotationsMap'),
 
 	allMetadataFields: b.read((state): NormalizedMetadataField[] => Object.values(state.corpus?.metadataFields || {}), 'allMetadataFields'),
 	allMetadataFieldsMap: b.read((state): Record<string, NormalizedMetadataField> => state.corpus?.metadataFields ?? {}, 'allMetadataFieldsMap'),
+
+	// TODO might be collisions between multiple annotatedFields, this is an unfinished part in blacklab
+	// like for instance, in a BLHitSnippet, how do we know which of the props comes from which annotatedfield.
+	/** Get all annotation displayNames, including for internal annotations */
+	annotationDisplayNames: b.read((state): Record<string, string> => mapReduce(get.allAnnotations(), 'id', a => a.displayName), 'annotationDisplayNames'),
 
 	// TODO there can be multiple main annotations if there are multiple annotatedFields
 	// the ui needs to respect this (probably render more extensive results?)
@@ -110,12 +83,8 @@ const privateActions = {
 const init = () => Promise.all([Api.frontend.getCorpus(), Api.blacklab.getRelations(INDEX_ID)])
 	.then(([index, relations]) => normalizeIndex(index, relations))
 	.then(corpus => {
-		// Set displayname in navbar if it's currently a fallback.
-		// (which is when search.xml doesn't specify a displayname)
-		const displayNameInNavbar = document.querySelector('.navbar-brand')!;
-		if (corpus.displayName && displayNameInNavbar.hasAttribute('data-is-fallback')) {
-			displayNameInNavbar.innerHTML = corpus.displayName || corpus.id;
-		}
+		// TODO we probably need a proper navbar component for this.
+		document.querySelector('.navbar-brand')!.innerHTML = corpus.displayName || corpus.id;
 
 		// We to finish up some state that might be missing.
 		if (corpus.documentCount === -1) {

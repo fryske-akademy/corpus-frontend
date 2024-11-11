@@ -50,6 +50,10 @@ export default Vue.extend({
 			options: OptGroup[],
 			searchable: boolean
 		} {
+			// NOTE: we need to always pass all available options, then hide invalids based on displayed results
+			// if we don't do this, sorting will be cleared on initial page load
+			// This happens because results aren't loaded yet, thus isHits/isDocs/isGroups all return false, and no options would be available
+			// then the selectpicker will reset value to undefined, which clears it in the store, which updates the url, etc.
 			const opts = [] as OptGroup[];
 
 			if (this.groups) {
@@ -77,7 +81,6 @@ export default Vue.extend({
 					this.corpus.annotationGroups,
 					this.corpus.annotatedFields[this.corpus.mainAnnotatedField].annotations,
 					'Sort',
-					this,
 					this.corpus.textDirection,
 					debug.debug
 				));
@@ -101,7 +104,6 @@ export default Vue.extend({
 					this.corpus.metadataFieldGroups,
 					this.corpus.metadataFields,
 					'Sort',
-					this,
 					debug.debug
 				));
 			}

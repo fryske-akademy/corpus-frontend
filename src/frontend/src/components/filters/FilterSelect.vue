@@ -23,9 +23,6 @@
 				:value="value"
 				@input="e_input($event);"
 			/>
-			<div class="col-xs-12" v-if="description">
-				<small class="text-muted description"><em>{{ description }}</em></small>
-			</div>
 		</div>
 	</div>
 </template>
@@ -47,8 +44,12 @@ export default BaseFilter.extend({
 		},
 	},
 	computed: {
-		searchable(): boolean { return this.options!.length > 10; },
+		options(): Option[] { return this.definition.metadata as Option[]; },
+		searchable(): boolean { return this.options.length > 10; },
 	},
+	methods: {
+		log: console.log,
+	}
 });
 
 </script>

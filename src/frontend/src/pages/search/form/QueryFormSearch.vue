@@ -9,30 +9,30 @@
 			<li v-if="glossEnabled" :class="{'active': activePattern==='glosses'}" @click.prevent="activePattern='glosses'"><a href="#glosses" class="querytype">{{$t('search.glosses.heading')}}</a></li>
 			<li :class="{'active': activePattern==='expert'}" @click.prevent="activePattern='expert'"><a href="#expert" class="querytype">{{$t('search.expert.heading')}}</a></li>
 		</ul>
-		<div class="tab-content" :class="{ parallel: isParallelCorpus }">
+		<div class="tab-content">
 			<div :class="['tab-pane form-horizontal', {'active': activePattern==='simple'}]" id="simple">
 				<!-- TODO render the full annotation instance? requires some changes to bind to store correctly and apply appropriate classes though -->
 				<div class="form-group form-group-lg">
 					<label class="control-label"
-						:for="simpleSearchAnnotation.id + '_' + uid"
-						:title="$tAnnotDescription(simpleSearchAnnotation)"
-					>{{$tAnnotDisplayName(simpleSearchAnnotation)}}
+						:for="firstMainAnnotation.id + '_' + uid"
+						:title="firstMainAnnotation.description || undefined"
+					>{{firstMainAnnotation.displayName}}
 					</label>
 
-					<div v-if="customAnnotations[simpleSearchAnnotation.id]"
-						:data-custom-annotation-root="simpleSearchAnnotation.id"
+					<div v-if="customAnnotations[firstMainAnnotation.id]"
+						:data-custom-annotation-root="firstMainAnnotation.id"
 						data-is-simple="true"
 						ref="_simple"
-					></div>
+					/>
+
 					<Annotation v-else
-						:key="'simple/' + simpleSearchAnnotation.annotatedFieldId + '/' + simpleSearchAnnotation.id"
-						:htmlId="'simple/' + simpleSearchAnnotation.annotatedFieldId + '/' + simpleSearchAnnotation.id"
-						:annotation="simpleSearchAnnotation"
+						:key="'simple/' + firstMainAnnotation.annotatedFieldId + '/' + firstMainAnnotation.id"
+						:htmlId="'simple/' + firstMainAnnotation.annotatedFieldId + '/' + firstMainAnnotation.id"
+						:annotation="firstMainAnnotation"
 						bare
 						simple
 					/>
 				</div>
-				<ParallelSourceAndTargets v-if="isParallelCorpus" block lg/>
 			</div>
 			<div :class="['tab-pane form-horizontal', {'active': activePattern==='extended'}]" id="extended">
 				<template v-if="useTabs">
@@ -52,7 +52,7 @@
 									:key="getTabId(tab.label) + '/' + annotation.annotatedFieldId + '/' + annotation.id"
 									:data-custom-annotation-root="annotation.id"
 									:ref="getTabId(tab.label) + '/' + annotation.annotatedFieldId + '/' + annotation.id"
-								></div>
+								/>
 
 								<Annotation v-else
 									:key="getTabId(tab.label) + '/' + annotation.annotatedFieldId + '/' + annotation.id"
@@ -60,6 +60,7 @@
 									:annotation="annotation"
 								/>
 							</template>
+
 						</div>
 					</div>
 				</template>
@@ -77,10 +78,26 @@
 							:annotation="annotation"
 						/>
 					</template>
+
+
 				</template>
 
-				<Within />
+				<!-- show this even if it's disabled when "within" contains a value, or you can never remove the value -->
+				<!-- this will probably never happen, but it could, if someone imports a query with a "within" clause active from somewhere -->
+				<div v-if="withinOptions.length || within" class="form-group">
+					<label class="col-xs-12 col-md-3">{{$t('search.extended.within')}}</label>
 
+					<div class="btn-group col-xs-12 col-md-9">
+						<button v-for="option in withinOptions"
+							type="button"
+							:class="['btn', within === option.value ? 'active btn-primary' : 'btn-default']"
+							:key="option.value"
+							:value="option.value"
+							:title="option.title || undefined"
+							@click="within = option.value"
+						>{{option.label || option.value || 'document'}}</button> <!-- empty value searches across entire documents -->
+					</div>
+				</div>
 				<div v-if="splitBatchEnabled" class="form-group">
 					<div class="col-xs-12 col-md-9 col-md-push-3 checkbox">
 						<label for="extended_split_batch">
@@ -88,11 +105,10 @@
 						</label>
 					</div>
 				</div>
-				<ParallelSourceAndTargets v-if="isParallelCorpus"/>
-
 			</div>
 			<div v-if="advancedEnabled" :class="['tab-pane', {'active': activePattern==='advanced'}]" id="advanced">
-				<SearchAdvanced	/>
+				<div id="querybuilder" ref="querybuilder"></div>
+				<button type="button" class="btn btn-default btn-sm" @click="copyAdvancedQuery">{{$t('search.advanced.copyAdvancedQuery')}}</button>
 			</div>
 			<div v-if="conceptEnabled" :class="['tab-pane', {'active': activePattern==='concept'}]" id="concept">
 
@@ -107,34 +123,28 @@
 				<button type="button" class="btn btn-default btn-sm" @click="copyGlossQuery">{{$t('search.glosses.copyGlossQuery')}}</button>
 			</div>
 			<div :class="['tab-pane', {'active': activePattern==='expert'}]" id="expert">
-				<SearchExpert />
-
-				<!-- Copy to builder, import, gap filling buttons -->
-				<template>
-					<button v-if="advancedEnabled" type="button" class="btn btn-sm btn-default" name="parseQuery" id="parseQuery"
-						:title="$t('search.expert.parseQueryTitle').toString()"
-						@click="parseQuery">{{$t('search.expert.parseQuery')}}</button>
-					<label class="btn btn-sm btn-default file-input-button" for="importQuery">
-						{{$t('search.expert.importQuery')}}
-						<input type="file" name="importQuery" id="importQuery" accept=".txt,text/plain" @change="importQuery" :title="$t('search.expert.importQueryTitle')">
+				<h3>{{$t('search.expert.corpusQueryLanguage')}}:</h3>
+				<textarea id="querybox" class="form-control" name="querybox" rows="7" v-model.lazy="expert"></textarea>
+				<button v-if="advancedEnabled" type="button" class="btn btn-sm btn-default" name="parseQuery" id="parseQuery" :title="$t('search.expert.parseQueryTitle')" @click="parseQuery">{{$t('search.expert.parseQuery')}}</button>
+				<label class="btn btn-sm btn-default file-input-button" for="importQuery">
+					{{$t('search.expert.importQuery')}}
+					<input type="file" name="importQuery" id="importQuery" accept=".txt,text/plain" @change="importQuery" :title="$t('search.expert.importQueryTitle')">
+				</label>
+				<div class="btn-group">
+					<label class="btn btn-sm btn-default file-input-button" for="gapFilling">
+						{{$t('search.expert.gapFilling')}}
+						<input type="file" name="gapFilling" id="gapFilling" accept=".tsv,.csv,text/plain" @change="importGapFile" :title="$t('search.expert.gapFillingTitle')">
 					</label>
-					<div class="btn-group">
-						<label class="btn btn-sm btn-default file-input-button" for="gapFilling">
-							{{$t('search.expert.gapFilling')}}
-							<input type="file" name="gapFilling" id="gapFilling" accept=".tsv,.csv,text/plain" @change="importGapFile" :title="$t('search.expert.gapFillingTitle')">
-						</label>
-						<button v-if="gapValue != null"
-							type="button"
-							class="btn btn-default btn-sm"
-							:title="$t('search.expert.clearGapValues').toString()"
-							@click="gapValue = null"
-						><span class="fa fa-times"></span></button>
-					</div>
-					<textarea type="area" v-if="gapValue != null" class="form-control gap-value-editor" v-model.lazy="gapValue" @keydown.tab.prevent="insertTabInText"/>
-					<span v-show="parseQueryError" id="parseQueryError" class="text-danger"><span class="fa fa-exclamation-triangle"></span> {{parseQueryError}}</span>
-					<span v-show="importQueryError" id="importQueryError" class="text-danger"><span class="fa fa-exclamation-triangle"></span> {{importQueryError}}</span>
-				</template>
-
+					<button v-if="gapValue != null"
+						type="button"
+						class="btn btn-default btn-sm"
+						:title="$t('search.expert.clearGapValues')"
+						@click="gapValue = null"
+					><span class="fa fa-times"></span></button>
+				</div>
+				<textarea type="area" v-if="gapValue != null" class="form-control gap-value-editor" v-model.lazy="gapValue" @keydown.tab.prevent="insertTabInText"/>
+				<span v-show="parseQueryError" id="parseQueryError" class="text-danger"><span class="fa fa-exclamation-triangle"></span> {{parseQueryError}}</span>
+				<span v-show="importQueryError" id="importQueryError" class="text-danger"><span class="fa fa-exclamation-triangle"></span> {{importQueryError}}</span>
 			</div>
 		</div>
 	</div>
@@ -154,38 +164,28 @@ import * as GapStore from '@/store/search/form/gap';
 import * as HistoryStore from '@/store/search/history';
 
 import Annotation from '@/pages/search/form/Annotation.vue';
-import SearchAdvanced from '@/pages/search/form/SearchAdvanced.vue';
-import SearchExpert from '@/pages/search/form/SearchExpert.vue';
 import ConceptSearch from '@/pages/search/form/concept/ConceptSearch.vue';
 import GlossSearch from '@/pages/search/form/concept/GlossSearch.vue';
-import ParallelSourceAndTargets from '@/pages/search/form/ParallelSourceAndTargets.vue';
-import Within from '@/pages/search/form/Within.vue';
 import uid from '@/mixins/uid';
+
+import { QueryBuilder } from '@/modules/cql_querybuilder';
 
 import { blacklabPaths } from '@/api';
 import * as AppTypes from '@/types/apptypes';
 import { getAnnotationSubset } from '@/utils';
-
 import { Option } from '@/components/SelectPicker.vue';
-import { corpusCustomizations } from '@/store/search/ui';
 
 function isVue(v: any): v is Vue { return v instanceof Vue; }
 function isJQuery(v: any): v is JQuery { return typeof v !== 'boolean' && v && v.jquery; }
 
-import ParallelFields from './parallel/ParallelFields';
-
-export default ParallelFields.extend({
+export default Vue.extend({
+	mixins: [uid] as any,
 	components: {
-		ParallelSourceAndTargets,
 		Annotation,
-		SearchAdvanced,
-		SearchExpert,
 		ConceptSearch,
-		GlossSearch,
-		Within,
+		GlossSearch
 	},
 	data: () => ({
-		uid: uid(),
 		parseQueryError: null as string|null,
 		importQueryError: null as string|null,
 
@@ -205,45 +205,42 @@ export default ParallelFields.extend({
 				CorpusStore.get.annotationGroups(),
 				CorpusStore.get.allAnnotationsMap(),
 				'Search',
-				this,
 				CorpusStore.get.textDirection()
 			);
 		},
 		allAnnotations(): AppTypes.NormalizedAnnotation[] {
 			return this.tabs.flatMap(tab => tab.entries);
 		},
-		simpleSearchAnnotation(): AppTypes.NormalizedAnnotation {
-			const id = UIStore.getState().search.simple.searchAnnotationId;
-			return CorpusStore.get.allAnnotationsMap()[id] || CorpusStore.get.firstMainAnnotation();
-		},
-		simpleSearchAnnoationAutoCompleteUrl(): string { return blacklabPaths.autocompleteAnnotation(INDEX_ID, this.simpleSearchAnnotation.annotatedFieldId, this.simpleSearchAnnotation.id); },
+		firstMainAnnotation: CorpusStore.get.firstMainAnnotation,
+		firstMainAnnotationACUrl(): string { return blacklabPaths.autocompleteAnnotation(INDEX_ID, this.firstMainAnnotation.annotatedFieldId, this.firstMainAnnotation.id); },
 		textDirection: CorpusStore.get.textDirection,
 		withinOptions(): Option[] {
 			const {enabled, elements} = UIStore.getState().search.shared.within;
-			return enabled ? elements.filter(corpusCustomizations.search.within.include) : [];
+			return enabled ? elements : [];
 		},
 		within: {
 			get(): string|null { return PatternStore.getState().extended.within; },
 			set: PatternStore.actions.extended.within,
 		},
-		splitBatchEnabled(): boolean {
-			return UIStore.getState().search.extended.splitBatch.enabled &&
-				!this.isParallelCorpus; // hide for parallel
-		},
+		splitBatchEnabled(): boolean { return UIStore.getState().search.extended.splitBatch.enabled; },
 		splitBatch: {
 			get(): boolean { return PatternStore.getState().extended.splitBatch; },
 			set: PatternStore.actions.extended.splitBatch
 		},
 		simple: {
-			get(): AppTypes.AnnotationValue { return PatternStore.getState().simple.annotationValue; },
-			set: PatternStore.actions.simple.annotation,
+			get(): AppTypes.AnnotationValue { return PatternStore.getState().simple; },
+			set: PatternStore.actions.simple,
 		},
 		advancedEnabled(): boolean { return UIStore.getState().search.advanced.enabled; },
 		glossEnabled(): boolean { return GlossStore.get.settings() != null; },
 		conceptEnabled(): boolean { return ConceptStore.get.settings() != null; },
 		advanced: {
-			get(): string|null { return PatternStore.getState().advanced.query; },
-			set: PatternStore.actions.advanced.query,
+			get(): string|null { return PatternStore.getState().advanced; },
+			set: PatternStore.actions.advanced,
+		},
+		expert: {
+			get(): string|null { return PatternStore.getState().expert; },
+			set: PatternStore.actions.expert,
 		},
 		concept: {
 			get(): string|null { return PatternStore.getState().concept; },
@@ -266,26 +263,15 @@ export default ParallelFields.extend({
 		getTabId(name?: string) {
 			return name?.replace(/[^\w]/g, '_') + '_annotations';
 		},
-		async parseQuery() {
-			const expertQueries = [PatternStore.getState().expert.query, ...PatternStore.getState().expert.targetQueries];
-
-			const queryBuilders = $('.querybuilder').map((_, el) => $(el).data('builder')).get();
-			let success = true;
-			for (let i = 0; i < queryBuilders.length; i++) {
-				const builder = queryBuilders[i];
-				if (builder) {
-					if (!(await builder.parse(expertQueries[i]))) {
-						success = false;
-						break;
-					}
-				}
-			}
-			if (success) {
+		parseQuery() {
+			// TODO dedicated component - port builder?
+			const builder: QueryBuilder = $(this.$refs.querybuilder as HTMLElement).data('builder');
+			if (builder && builder.parse(this.expert)) {
 				InterfaceStore.actions.patternMode('advanced');
 				this.parseQueryError = null;
-				return;
+			} else {
+				this.parseQueryError = 'The querybuilder could not parse your query.';
 			}
-			this.parseQueryError = 'The querybuilder could not parse your query.';
 		},
 		importQuery(event: Event) {
 			const el = (event.target as HTMLInputElement);
@@ -325,12 +311,18 @@ export default ParallelFields.extend({
 			el.selectionEnd = el.selectionStart = originalSelectionStart + 1;
 		},
 
+		copyAdvancedQuery() {
+			PatternStore.actions.expert(PatternStore.getState().advanced);
+			InterfaceStore.actions.patternMode('expert');
+		},
 		copyConceptQuery() {
-			PatternStore.actions.expert.query(this.concept);
+			//PatternStore.actions.expert(PatternStore.getState().advanced);
+			this.expert = this.concept
 			InterfaceStore.actions.patternMode('expert');
 		},
 		copyGlossQuery() {
-			PatternStore.actions.expert.query(this.glosses);
+			//PatternStore.actions.expert(PatternStore.getState().advanced);
+			this.expert = this.glosses
 			InterfaceStore.actions.patternMode('expert');
 		},
 		setupCustomAnnotation(div: HTMLElement, plugin: NonNullable<UIStore.ModuleRootState['search']['shared']['customAnnotations'][string]>) {
@@ -338,7 +330,7 @@ export default ParallelFields.extend({
 			const isSimpleAnnotation = div.hasAttribute('data-is-simple');
 
 			const config = CorpusStore.get.allAnnotationsMap()[annotId];
-			const value = isSimpleAnnotation ? PatternStore.getState().simple.annotationValue : PatternStore.getState().extended.annotationValues[annotId];
+			const value = isSimpleAnnotation ? PatternStore.getState().simple : PatternStore.getState().extended.annotationValues[annotId];
 
 			const {render, update} = plugin;
 			const ui = render(config, value, Vue);
@@ -352,24 +344,6 @@ export default ParallelFields.extend({
 				// setup watcher so custom component is notified of changes to its value by external processes (global form reset, history state restore, etc.)
 				RootStore.store.watch(state => value, (cur, prev) => update(cur, prev, div), {deep: true});
 			}
-		},
-		withinAttributes(): Option[] {
-			const within = this.within;
-			if (!within) return [];
-
-			const option = this.withinOptions.find(o => o.value === within);
-			if (!option) return [];
-
-			return (corpusCustomizations.search.within.attributes(option) || [])
-				.map(el => typeof el === 'string' ? { value: el } : el);
-		},
-		withinAttributeValue(option: Option) {
-			const value = PatternStore.getState().extended.withinAttributes[option.value];
-			return value == null ? '' : value;
-		},
-		changeWithinAttribute(option: Option, event: Event) {
-			const el = event.target as HTMLInputElement;
-			PatternStore.actions.extended.setWithinAttribute({ name: option.value, value: el.value });
 		},
 	},
 	watch: {
@@ -413,41 +387,22 @@ export default ParallelFields.extend({
 
 <style lang="scss">
 
-.querybuilder {
+#querybox {
+	width: 100%;
+	resize: none;
+	margin-bottom: 10px;
+}
+
+#querybuilder {
 	background-color: rgba(255, 255, 255, 0.7);
 	border-radius: 4px;
 	box-shadow: inset 0 1px 1px rgba(0, 0, 0, .075);
 	border: 1px solid #ccc;
 	margin-bottom: 10px;
-
-	.close {
-		opacity: 0.4; // make close buttons a little more visible
-		&:hover, &:focus { opacity: 0.6; }
-	}
 }
 
-.parallel .qb-par-wrap {
-
-	background-color: rgba(255, 255, 255, 0.7);
-	border-radius: 4px;
-	box-shadow: inset 0 1px 1px rgba(0, 0, 0, .075);
-	border: 1px solid #ccc;
-	margin-bottom: 10px;
-	padding: 20px;
-
-	label.control-label { margin: 0 0 20px 0; }
-
-	.querybuilder {
-		border: 0;
-		box-shadow: none;
-		margin-bottom: 0;
-		&.bl-querybuilder-root { padding: 0; }
-	}
-}
-
-#simple .form-group {
-	margin-right: auto;
-	margin-left: auto;
+#simple > .form-group {
+	margin: auto;
 	max-width: 1170px;
 }
 
@@ -484,11 +439,6 @@ textarea.gap-value-editor {
 	overflow: auto;
 	overflow-x: hidden;
 	margin-bottom: 15px;
-}
-
-div.attr {
-	margin-top: 4px;
-	label, input { width: 6em; }
 }
 
 </style>

@@ -9,8 +9,8 @@ export type NormalizedAnnotation = {
 	/** id of the field this annotation resides in, usually 'contents' */
 	annotatedFieldId: string;
 	caseSensitive: boolean;
-	defaultDescription: string;
-	defaultDisplayName: string;
+	description: string;
+	displayName: string;
 	hasForwardIndex: boolean;
 	/** 'lemma', 'pos', etc. These are only unique within the same annotatedField */
 	id: string;
@@ -32,17 +32,14 @@ export type NormalizedAnnotation = {
 };
 
 /** A set of annotations that form one data set on a token, usually there is only one of these in an index, called 'content' */
-type NormalizedAnnotatedFieldBase  = {
+export type NormalizedAnnotatedField = {
 	annotations: { [annotationId: string]: NormalizedAnnotation };
-	defaultDescription: string;
-	defaultDisplayName: string;
+	description: string;
+	displayName: string;
 	hasContentStore: boolean;
 	hasLengthTokens: boolean;
 	hasXmlTags: boolean;
-	/**
-	 * usually 'contents', annotatedFieldId in NormalizedAnnotation refers to this.
-	 * In parallel corpora, consists of a prefix (e.g. "contents") and a suffix (e.g. "en").
-	 */
+	/** usually 'contents', annotatedFieldId in NormalizedAnnotation refers to this */
 	id: string;
 	isAnnotatedField: boolean;
 	/**
@@ -53,21 +50,11 @@ type NormalizedAnnotatedFieldBase  = {
 	mainAnnotationId: string;
 };
 
-export type NormalizedAnnotatedFieldParallel = NormalizedAnnotatedFieldBase&{
-	isParallel: true;
-	/** The prefix of the parallel field. e.g. "contents" */
-	prefix: string;
-	/** The version of the parallel field. e.g. "nl" or "en" */
-	version: string;
-}
-export type NormalizedAnnotatedFieldNotParallel = NormalizedAnnotatedFieldBase&{
-	isParallel: false;
-}
-export type NormalizedAnnotatedField = NormalizedAnnotatedFieldParallel|NormalizedAnnotatedFieldNotParallel;
-
 export type NormalizedMetadataField = {
-	defaultDescription: string;
-	defaultDisplayName: string;
+	description: string;
+	displayName: string;
+	// /** Id of the metadataFieldGroup, if part of a group */
+	// groupId?: string;
 	id: string;
 	/**
 	 * Based on the uiType of the original metadata field,
@@ -75,7 +62,7 @@ export type NormalizedMetadataField = {
 	 * Unknown types are replaced by 'text'
 	 */
 	uiType: 'select'|'combobox'|'text'|'range'|'checkbox'|'radio'|'date';
-	/** Only when uiType === 'select', 'checkbox' or 'radio'. See blacklabutils::normalizeMetadata */
+	/** Only when uiType === 'select' */
 	values?: Array<{value: string, label: string, title: string|null}>;
 };
 
@@ -102,7 +89,7 @@ export type NormalizedAnnotationGroup = {
 };
 
 export type NormalizedMetadataGroup = {
-	/** Unique, treat as a user-friendly name. */
+	/** Unique within groups with the same annotatedFieldId, treat as a user-friendly name. */
 	id: string;
 	/** Keys in metadataFields */
 	entries: string[];
@@ -140,7 +127,7 @@ export type NormalizedIndexBase = {
 /** Contains information about the internal structure of the index - which fields exist for tokens, which metadata fields exist for documents, etc */
 export type NormalizedIndex = NormalizedIndexBase&{
 	annotatedFields: { [id: string]: NormalizedAnnotatedField; };
-	/** Default Annotated Field that BlackLab searches in, if not explicity overridden in the query. */
+	/** Key info annotatedFields */
 	mainAnnotatedField: string;
 	/**
 	 * If no groups are defined by blacklab itself, all annotations of all annotatedFields are placed in generated groups.
@@ -243,10 +230,8 @@ export type FilterValue = {
 export type FilterDefinition<MetadataType = any, ValueType = any> = {
 	/** Id of the filters, this must be unique */
 	id: string;
-	/** Display name to show if there is no localized version in the i18n bundle */
-	defaultDisplayName: string;
-	/** Description to show if there is no localized version in the i18n bundle */
-	defaultDescription?: string;
+	displayName: string;
+	description?: string;
 	/** Name of the component, for filters generated from the blacklab index metadata, `filter-${uiType}` */
 	componentName: string;
 	/** The group this filter is part of, only for ui purposes. */
@@ -287,11 +272,10 @@ export type CaptureAndRelation = {
 
 	/** Color info for highlighting the word. */
 	highlight: TokenHighlight;
-
-	/** Should we permanently highlight this? If not, we may still highlight it on hover (parallel corpora) */
-	showHighlight: boolean;
 }
 export type HitToken = {
+	/** Value of the main annotation. For ease of use. */
+	text: string;
 	/** Raw values of the extracted annotations. */
 	annotations: Record<string, string>
 	/** after the text */

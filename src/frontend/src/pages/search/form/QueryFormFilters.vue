@@ -22,8 +22,8 @@
 			>
 				<template v-for="(subtab, j) in tab.subtabs">
 					<h3 v-if="subtab.tabname" :key="j + subtab.tabname">{{subtab.tabname}}</h3>
-					<hr v-else-if="j !== 0" :key="j">
-					<Component v-for="id in subtab.filters" :key="tab.name + id"
+					<hr v-else-if="j !== 0" :key="j + subtab.tabname">
+					<Component v-for="id in subtab.filters" :key="tab.tabname + id"
 						:is="filterMap[id].componentName"
 						:htmlId="i+(j+id) /* brackets or else i+j collapses before stringifying */"
 						:definition="filterMap[id]"
@@ -95,15 +95,12 @@ export default Vue.extend({
 		},
 		tabs(): Array<{
 			name: string;
-		}&({
 			subtabs: Array<{
 				tabname?: string;
 				filters: string[],
 			}>;
 			query?: Record<string, string[]>;
-		}/*|{
-			within: any;
-		}*/)> {
+		}> {
 			const availableBuiltinFilters = CorpusStore.get.allMetadataFieldsMap();
 			const builtinFiltersToShow = UIStore.getState().search.shared.searchMetadataIds;
 			const customFilters = Object.keys(FilterStore.getState().filters).filter(id => !availableBuiltinFilters[id]);
@@ -112,14 +109,11 @@ export default Vue.extend({
 			// the filters should be in the correct order already
 			return FilterStore.getState().filterGroups
 				.map(group => ({
-					name: this.$tMetaGroupName(group.tabname),
+					name: group.tabname,
 					subtabs: group.subtabs
 						.map(subtab => ({
-							tabname: this.$tMetaGroupName(subtab.tabname),
-							filters: subtab.fields.filter(id => {
-								const showField = UIStore.corpusCustomizations.search.metadata.show(id);
-								return showField === true || (showField === null && allIdsToShow.has(id));
-							})
+							tabname: subtab.tabname,
+							filters: subtab.fields.filter(id => allIdsToShow.has(id))
 						}))
 						.filter(subtab => subtab.filters.length),
 					query: group.query

@@ -3,7 +3,6 @@ import LoginButton from '@/components/LoginButton.vue';
 import { BLServer } from '@/types/blacklabtypes';
 import axios from 'axios';
 import { handleError } from '@/api/apiutils';
-import { debugLogCat } from './debug';
 
 
 // Separate from loginsystem.ts to prevent circular dependency between LoginButton and loginsystem.
@@ -70,17 +69,11 @@ export async function awaitInit(settings: {
 			url.searchParams.delete('code');
 			url.searchParams.delete('scope');
 			// place back the url without the callback info
-			debugLogCat('history', `Calling replaceState with URL: ${url}`);
 			window.history.replaceState({}, '', url);
 		} else {
 			// check if we're already logged in
 			try {
-				const status = await userManager.querySessionStatus({
-					// otherwise, we get a hang if the server isn't responding.
-					// this can happen for example when the Client isn't whitelisted for the current domain
-					// in that case the iframe will fail to load and the promise will never resolve.
-					silentRequestTimeoutInSeconds: 5,
-				});
+				const status = await userManager.querySessionStatus();
 				if (status?.sub) {
 					// we're logged in, get the user object
 					try { user = await userManager.signinSilent(); }
@@ -98,7 +91,7 @@ export async function awaitInit(settings: {
 
 		if (user) {
 			userManager.startSilentRenew();
-			loginButton.$props.username = user.profile.preferred_username || user.profile.email || user.profile.sub;
+			loginButton.$props.username = user.profile.email || user.profile.name;
 		}
 		return user || null; // normalize weird void type to null.
 	} else if (settings.fallbackUsername) {

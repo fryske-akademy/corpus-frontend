@@ -73,6 +73,7 @@ export default Vue.extend({
 	methods: {
 		_createAutocomplete() {
 			const $input = $(this.$el);
+			//console.log($input.id)
 			const self = this;
 			let lastSearchValue = '';
 			let lastSearchResults: string[]|undefined;

@@ -13,7 +13,7 @@
 					<label class="col-xs-4 col-md-2" for="corpora-group-by">{{$t('explore.corpora.groupBy')}}</label>
 					<div class="col-xs-8">
 						<SelectPicker
-							:placeholder="`${$t('explore.corpora.groupBy')}...`"
+							placeholder="Group by..."
 							data-id="corpora-group-by"
 							data-width="100%"
 							style="max-width: 400px;"
@@ -28,10 +28,10 @@
 					</div>
 				</div>
 				<div class="form-group">
-					<label class="col-xs-4 col-md-2" for="corpora-display-mode">{{$t('explore.corpora.showAs.heading')}}</label>
+					<label class="col-xs-4 col-md-2" for="corpora-display-mode">{{$t('explore.corpora.showAs')}}</label>
 					<div class="col-xs-8">
 						<SelectPicker
-							:placeholder="$t('explore.corpora.showAs.heading')"
+							placeholder="Show as"
 							data-id="corpora-display-mode"
 							data-width="100%"
 							style="max-width: 400px;"
@@ -72,7 +72,6 @@
 
 							data-width="100%"
 							hideEmpty
-							allowHtml
 
 							:options="annotationGroupByOptions"
 
@@ -92,7 +91,6 @@
 							:value="token.id"
 							placeholder="Property"
 							hideEmpty
-							allowHtml
 
 							@change="updateTokenAnnotation(index, $event /* custom component - custom event values */)"
 						/>
@@ -102,8 +100,8 @@
 							data-class="btn btn-default"
 							data-menu-width="grow"
 
-							:searchable="token.annotation.values && token.annotation.values.length > 12"
-							:placeholder="$tAnnotDisplayName(token.annotation)"
+							:searchable="token.annotation.values.length > 12"
+							:placeholder="token.annotation.displayName"
 							:data-dir="token.annotation.isMainAnnotation ? mainTokenTextDirection : undefined"
 							:options="token.annotation.values"
 							:disabled="index >= ngramSize"
@@ -125,7 +123,7 @@
 
 							useQuoteAsWordBoundary
 
-							:placeholder="$tAnnotDisplayName(token.annotation)"
+							:placeholder="token.annotation.displayName"
 							:dir="token.annotation.isMainAnnotation ? mainTokenTextDirection : undefined"
 							:disabled="index >= ngramSize"
 
@@ -147,7 +145,6 @@
 
 						data-width="100%"
 						hideEmpty
-						allowHtml
 
 						:options="annotationGroupByOptions"
 
@@ -229,10 +226,7 @@ export default Vue.extend({
 				CorpusStore.get.annotationGroups(),
 				CorpusStore.get.allAnnotationsMap(),
 				'Search',
-				this,
-				CorpusStore.get.textDirection(),
-				debug.debug,
-				false
+				CorpusStore.get.textDirection()
 			);
 			return optGroups.length > 1 ? optGroups : optGroups.flatMap(g => g.options as Option[]);
 		},
@@ -242,10 +236,7 @@ export default Vue.extend({
 				CorpusStore.get.annotationGroups(),
 				CorpusStore.get.allAnnotationsMap(),
 				'Search', // we don't want the before hit/after hit context options, just do search mode, it'll be fine
-				this,
-				CorpusStore.get.textDirection(),
-				debug.debug,
-				UIStore.getState().dropdowns.groupBy.annotationGroupLabelsVisible
+				CorpusStore.get.textDirection()
 			);
 			return optGroups.length > 1 ? optGroups : optGroups.flatMap(g => g.options as Option[]);
 		},
@@ -261,26 +252,14 @@ export default Vue.extend({
 				UIStore.getState().results.shared.groupMetadataIds,
 				CorpusStore.get.metadataGroups(),
 				CorpusStore.get.allMetadataFieldsMap(),
-				'Group',
-				this,
-				debug.debug,
-				UIStore.getState().dropdowns.groupBy.metadataGroupLabelsVisible
+				'Group'
 			);
 			optGroups.forEach(fix);
 			return optGroups;
 		},
-		corporaGroupDisplayModeOptions(): Option[] {
+		corporaGroupDisplayModeOptions(): string[] {
 			// TODO
-			return [{
-				value: 'table',
-				label: this.$t('explore.corpora.showAs.table').toString(),
-			}, {
-				value: 'docs',
-				label: this.$t('explore.corpora.showAs.docs').toString(),
-			}, {
-				value: 'tokens',
-				label: this.$t('explore.corpora.showAs.tokens').toString(),
-			}];
+			return ['table', 'docs', 'tokens'];
 		},
 
 		mainTokenTextDirection: CorpusStore.get.textDirection,
@@ -303,7 +282,7 @@ export default Vue.extend({
 		}
 	},
 	created() {
-		this.corporaGroupDisplayMode = this.corporaGroupDisplayModeOptions[0].value;
+		this.corporaGroupDisplayMode = this.corporaGroupDisplayModeOptions[0];
 	}
 });
 </script>

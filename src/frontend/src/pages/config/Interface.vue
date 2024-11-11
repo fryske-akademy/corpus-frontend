@@ -43,16 +43,16 @@ const component = Vue.extend({
 			return Object
 				.values(this.index.annotatedFields)
 				.flatMap(f => Object.values(f.annotations))
-				.sort((a, b) => a.defaultDisplayName.localeCompare(b.defaultDisplayName))
+				.sort((a, b) => a.displayName.localeCompare(b.displayName))
 		},
 		forwardIndexAnnotations(): Option[] {
 			return Object
 				.values(this.index.annotatedFields)
 				.flatMap(f => Object.values(f.annotations))
-				.sort((a, b) => a.defaultDisplayName.localeCompare(b.defaultDisplayName))
+				.sort((a, b) => a.displayName.localeCompare(b.displayName))
 				.map<Option>(a => ({
 					value: a.id,
-					label: `${a.defaultDisplayName} [<strong>${a.id}</strong>] ${a.hasForwardIndex ? '' : '<small>(no forward index)</small>'}`,
+					label: `${a.displayName} [<strong>${a.id}</strong>] ${a.hasForwardIndex ? '' : '<small>(no forward index)</small>'}`,
 					disabled: !a.hasForwardIndex
 				}));
 		},
@@ -60,10 +60,10 @@ const component = Vue.extend({
 			return Object
 				.values(this.index.annotatedFields)
 				.flatMap(f => Object.values(f.annotations))
-				.sort((a, b) => a.defaultDisplayName.localeCompare(b.defaultDisplayName))
+				.sort((a, b) => a.displayName.localeCompare(b.displayName))
 				.map<Option>(a => ({
 					value: a.id,
-					label: `${a.defaultDisplayName} [<strong>${a.id}</strong>]}`,
+					label: `${a.displayName} [<strong>${a.id}</strong>]}`,
 				}));
 		}
 	},
