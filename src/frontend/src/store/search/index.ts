@@ -87,6 +87,7 @@ const get = {
 			group: activeView.groupBy.join(','),
 
 			number: state.global.pageSize,
+			field: QueryModule.get.annotatedFieldName(),
 			patt: QueryModule.get.patternString(),
 			pattgapdata: (QueryModule.get.patternString() && QueryModule.getState().gap) ? QueryModule.getState().gap!.value || undefined : undefined,
 
@@ -182,6 +183,7 @@ const actions = {
 					// Also cast back into correct type after parsing/stringifying so we don't lose type-safety (parse returns any)
 					filters: get.filtersActive() ? cloneDeep(FilterModule.get.activeFiltersMap()) as ReturnType<typeof FilterModule['get']['activeFiltersMap']> : {},
 					formState: cloneDeep(ExploreModule.getState()[exploreMode]) as ExploreModule.ModuleRootState[typeof exploreMode],
+					parallelFields: cloneDeep(PatternModule.get.parallelAnnotatedFields()) as PatternModule.ModuleRootState['parallelFields'],
 					gap: get.gapFillingActive() ? GapModule.getState() : GapModule.defaults,
 				};
 				break;
@@ -195,6 +197,7 @@ const actions = {
 					// Also cast back into correct type after parsing/stringifying so we don't lose type-safety (parse returns any)
 					filters: get.filtersActive() ? cloneDeep(FilterModule.get.activeFiltersMap()) as ReturnType<typeof FilterModule['get']['activeFiltersMap']> : {},
 					formState: cloneDeep(PatternModule.getState()[patternMode]) as PatternModule.ModuleRootState[typeof patternMode],
+					parallelFields: cloneDeep(PatternModule.get.parallelAnnotatedFields()) as PatternModule.ModuleRootState['parallelFields'],
 					gap: get.gapFillingActive() ? GapModule.getState() : GapModule.defaults,
 				};
 				break;
@@ -264,21 +267,31 @@ const actions = {
 			entry: {
 				...sharedBatchState,
 				patterns: {
-					advanced: null,
+					advanced: {
+						query: null,
+						targetQueries: [],
+					},
 					concept: null,
 					glosses: null,
-					expert: null,
-					simple: {...PatternModule.getState().simple, value: '', case: false},
+					expert: {
+						query: null,
+						targetQueries: [],
+					},
+					parallelFields: PatternModule.getState().parallelFields, // <-- is this ok?
+					simple: PatternModule.getState().simple,
 					extended: {
 						annotationValues: {
 							[a.id]: a
 						},
 						splitBatch: false,
-						within: state.patterns.extended.within
+						within: state.patterns.extended.within,
+						withinAttributes: state.patterns.extended.withinAttributes,
 					}
 				}
 			},
-			pattern: getPatternString([a], state.patterns.extended.within),
+			pattern: getPatternString([a], state.patterns.extended.within, state.patterns.extended.withinAttributes,
+				state.patterns.parallelFields.targets,
+				state.patterns.parallelFields.alignBy || state.ui.search.shared.alignBy.defaultValue),
 			// TODO :( url generation is too encapsulated to completely repro here
 			url: ''
 		}))

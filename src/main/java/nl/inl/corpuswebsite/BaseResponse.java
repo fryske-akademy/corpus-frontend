@@ -18,7 +18,6 @@ import javax.servlet.http.Cookie;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
-import org.apache.commons.lang3.StringUtils;
 import org.apache.velocity.Template;
 import org.apache.velocity.VelocityContext;
 import org.apache.velocity.app.event.EventCartridge;
@@ -148,6 +147,9 @@ public abstract class BaseResponse {
         model.put("OIDC_METADATA_URL", globalCfg.get(Keys.OIDC_METADATA_URL));
         model.put("OIDC_CLIENT_ID", globalCfg.get(Keys.OIDC_CLIENT_ID));
 
+        model.put("displayName", cfg.getDisplayName());
+        model.put("displayNameIsFallback", cfg.displayNameIsFallback());
+
         // HTML-escape all data written into the velocity templates by default
         // Only allow access to the raw string if the expression contains the word "unescaped"
         EventCartridge cartridge = model.getEventCartridge();
@@ -198,34 +200,6 @@ public abstract class BaseResponse {
      */
     protected void displayHtmlTemplate(Template template) {
         displayTemplate(template, "text/html");
-    }
-
-    /**
-     * Returns the value of a servlet parameter, or the default value
-     *
-     * @param name name of the parameter
-     * @param defaultValue default value
-     * @return value of the paramater
-     */
-    public String getParameter(String name, String defaultValue) {
-        return Optional.ofNullable(request.getParameter(name)).map(StringUtils::trimToNull).orElse(defaultValue);
-    }
-
-    /**
-     * Returns the value of a servlet parameter, or the default value
-     *
-     * @param name name of the parameter
-     * @param defaultValue default value
-     * @return value of the paramater
-     */
-    public int getParameter(String name, int defaultValue) {
-        String value = getParameter(name, Integer.toString(defaultValue));
-        try {
-            return Integer.parseInt(value);
-        } catch (NumberFormatException e) {
-            logger.fine(String.format("Could not parse parameter '%s', value '%s'. Using default (%s)", name, value, defaultValue));
-            return defaultValue;
-        }
     }
 
     /**

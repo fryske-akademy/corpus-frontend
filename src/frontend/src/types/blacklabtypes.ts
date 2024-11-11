@@ -5,7 +5,7 @@ export type BLSearchParameters = {
 	/** Number of results to request */
 	number: number;
 	/** Index of first result to request */
-	first: number;
+	first?: number;
 	/** Percentage of results to return (0-100), mutually exclusive with 'samplenum' */
 	sample?: number;
 	/** Sample up to a flat number of results from the total result set, mutually exclusive with 'sample' */
@@ -18,6 +18,10 @@ export type BLSearchParameters = {
 	filter?: string;
 	/** How to sort results, comma-separated list of field:${someMetadataFieldId} or (wordleft|hit|wordright):${someAnnotationId} */
 	group?: string;
+	/** Parallel corpus field to search or show contents from (defaults to main version) */
+	field?: string;
+	/** Parallel corpus field to search (if different from "field") */
+	searchfield?: string;
 	/** CQL query */
 	patt?: string;
 	/**
@@ -125,14 +129,7 @@ export interface BLRelationInfo {
 	*/
 	spans?: Record<string, BLSpanInfo>;
 	/** Only when relations have been indexed in this corpus. */
-	relations?: {
-		/** Relations are always stored in a "dep" property for now? */
-		dep: {
-			[relationType: string]: {
-				count: number;
-			}
-		}
-	}
+	relations?: Record<string, Record<string, number>>; // {relClass: {relType: count}}
 }
 
 export interface BLUser {
@@ -186,9 +183,9 @@ export interface BLServer {
 	blacklabVersion: string;
 	cacheStatus?: BLCacheStatus;
 	helpPageUrl: string;
-	corpora: {
-		[key: string]: BLIndex;
-	};
+	// Interop with older servers.
+	corpora?: Record<string, BLIndex>
+	indices?: Record<string, BLIndex>;
 	user: BLUser;
 }
 
@@ -224,7 +221,7 @@ export interface BLAnnotation {
 	valueListComplete?: boolean;
 }
 
-/** A set of annotations that form one data set on a token, usually there is only one of these in an index, called 'content' */
+/** A set of annotations that form one data set on a token, usually there is only one of these in an index, called 'contents' */
 interface BLAnnotatedFieldInternal  {
 	description: string;
 	displayName: string;
@@ -324,7 +321,7 @@ export interface BLIndexMetadata {
 
 	annotatedFields: {[id: string]: BLAnnotatedFieldV2};
 	/** key into annotatedFields */
-	mainAnnotatedField: string;
+	mainAnnotatedField?: string;
 	/** Only available if index contains actual documents and if versionInfo.blackLabVersion >= 2.0.0 */
 	documentCount: number;
 };
@@ -347,6 +344,13 @@ export type BLSearchSummarySampleSettings = {} | {
 	sampleSize: number;
 };
 
+/** Match info definition in summary */
+export type BLSummaryMatchInfo = {
+	type: 'span'|'tag'|'relation'|'list';
+	fieldName?: string;     // field this capture is in (if not default field)
+	targetField?: string;   // field the relation target is in (if not default field)
+};
+
 // TODO - incomplete
 export type BLSearchSummary = {
 	actualWindowSize: number;
@@ -366,15 +370,15 @@ export type BLSearchSummary = {
 	pattern?: {
 		/** The serialization of the query object BlackLab actually executed. */
 		bcql: string;
-		/** One of the annotatedFields */
+		/** The main annotatedField that was searched. This is the full name of the field e.g. "contents__en" */
 		fieldName: string;
+		/** Any other annotatedFields involved in the search (in case of parallel corpora). These are the full names e.g. ["contents__en"] */
+		otherFields?: string[];
 		/** Json representation of the query. Not present when requesting results as xml output. */
 		json?: any;
 		/* MatchInfos only available when hits are returned (i.e. not a docs request, not grouped) */
 		matchInfos?: {
-			[key: string]: {
-				type: 'span'|'tag'|'relation'|'list';
-			}
+			[key: string]: BLSummaryMatchInfo;
 		}
 	}
 } & BLSearchSummarySampleSettings;
@@ -505,7 +509,7 @@ export type BLHitSnippet = {
 }
 
 /** When tagging part of the query like a:[] returns the start and end of the part labelled with the 'a' (so in this case, the []) */
-export interface BLRelationMatchSpan {
+export interface BLMatchInfoSpan {
 	/** When tagging part of the query like a:[] returns the start and end of the part labelled with the 'a' (so in this case, the []) */
 	type: 'span';
 	start: number;
@@ -513,7 +517,7 @@ export interface BLRelationMatchSpan {
 }
 
 /** Something like "within <s/>". Represents the start and end of the span surrounded with the <s/>. */
-export interface BLRelationMatchTag {
+export interface BLMatchInfoTag {
 	/** Something like "within <s/>". Represents the start and end of the span surrounded with the <s/>. */
 	type: 'tag';
 	start: number;
@@ -521,7 +525,7 @@ export interface BLRelationMatchTag {
 }
 
 /** Represents the info captured by an arrow in the query (-->, ==>). So the source, target, and value. */
-export interface BLRelationMatchRelation {
+export interface BLMatchInfoRelation {
 	/** Represents the info captured by an arrow in the query (-->, ==>). So the source, target, and value. */
 	type: 'relation';
 	/**
@@ -541,6 +545,8 @@ export interface BLRelationMatchRelation {
 	targetStart: number;
 	/** Exclusive index */
 	targetEnd: number;
+	/** Target field, if different from source field */
+	targetField?: string;
 
 	/** Smallest of sourceStart and targetStart */
 	start: number;
@@ -553,7 +559,7 @@ export interface BLRelationMatchRelation {
  * The infos will contain a multitude of RelationMatchRelation objects, each representing a relation between two tokens within the span.
  * The start and end of the entirity of the span are also included.
  */
-export interface BLRelationMatchList {
+export interface BLMatchInfoList {
 	/**
 	 * Usually when requesting all relations within a tag (with query parameter "context=s" when corpus contains <s/> tags for example)
 	 * The infos will contain a multitude of RelationMatchRelation objects, each representing a relation between two tokens within the span.
@@ -561,11 +567,16 @@ export interface BLRelationMatchList {
 	type: 'list';
 	start: number;
 	end: number;
-	infos: Array<BLRelationMatchRelation>
+	infos: Array<BLMatchInfoRelation>
 }
 
+export type BLMatchInfo = BLMatchInfoSpan|BLMatchInfoRelation|BLMatchInfoTag|BLMatchInfoList;
+
+/** One of the otherFields hits (parallel corpus query, hit in one of the target fields) */
+export type BLHitInOtherField = Omit<BLHit, 'otherFields'|'docPid'>;
+
+/** A hit in the BlackLab hits response. */
 export type BLHit = BLHitSnippet&{
-	docPid: string;
 	start: number;
 	end: number;
 	/**
@@ -575,20 +586,25 @@ export type BLHit = BLHitSnippet&{
 	 * The above query could result for example in:
 	 *  obj: {
 	 *    type: "relation",
-     *    relClass: "dep",
-     *    relType: "obj",
-     *    sourceStart: 26,
-     *    sourceEnd: 27,
-     *    targetStart: 25,
-     *    targetEnd: 26,
-     *    start: 25,
-     *    end: 27
+	 *    relClass: "dep",
+	 *    relType: "obj",
+	 *    sourceStart: 26,
+	 *    sourceEnd: 27,
+	 *    targetStart: 25,
+	 *    targetEnd: 26,
+	 *    start: 25,
+	 *    end: 27
 	 *  }
 	 */
-	matchInfos?: {
-		context_rels?: BLRelationMatchList;
-	}&Record<string, BLRelationMatchSpan|BLRelationMatchRelation|BLRelationMatchTag>
+	matchInfos?: Record<string, BLMatchInfo>;
+	docPid: string;
+	/** parallel corpus: aligned hits in other (requested) versions. Keyed by te full id of the annotatedField e.g. "contents__en" */
+	otherFields?: Record<string, BLHitInOtherField>; //
 };
+
+export function hitHasParallelInfo(h: BLHit|BLHitSnippet): h is Required<BLHit> {
+	return !!(h as BLHit).matchInfos && !!(h as BLHit).otherFields;
+}
 
 /** Contains occurance counts of terms in the index */
 export interface BLTermOccurances {
@@ -600,6 +616,7 @@ export interface BLTermOccurances {
 /** Contains all metadata for a document. Fields without indexed values are omitted! */
 export type BLDocInfo = {
 	lengthInTokens: number;
+	tokenCounts?: Array<{fieldName: string; tokenCount: number}>
 	mayView: boolean;
 }&{
 	[key: string]: string[];

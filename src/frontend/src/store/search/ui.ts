@@ -14,8 +14,11 @@ import { stripIndent, html } from 'common-tags';
 import { RootState } from '@/store/search/';
 import * as CorpusStore from '@/store/search/corpus';
 import * as ViewsStore from '@/store/search/results/views';
+import * as PatternsStore from '@/store/search/form/patterns';
 import * as BLTypes from '@/types/blacklabtypes';
 import * as AppTypes from '@/types/apptypes';
+import { Option } from '@/types/apptypes';
+import { HighlightSection } from '@/utils/hit-highlighting';
 
 type CustomView = {
 	id: string;
@@ -30,7 +33,9 @@ type CustomView = {
 type ModuleRootState = {
 	search: {
 		// future use
-		simple: {};
+		simple: {
+			searchAnnotationId: string;
+		};
 		extended: {
 			/** Available annotation inputs in the extended search */
 			searchAnnotationIds: string[],
@@ -49,7 +54,6 @@ type ModuleRootState = {
 		shared: {
 			/**
 			 * Fields available in the filters view. Sorted by global metadata order.
-			 * This does not contain custom filters.
 			 * NOTE THAT THIS MAY CONTAIN IDS THAT ARE NOT A METADATA FIELD.
 			 * The reason for this is custom filters.
 			 * We cannot reasonably validate this, so we only output a warning when you're trying to register those.
@@ -65,7 +69,7 @@ type ModuleRootState = {
 				enabled: boolean;
 				elements: Array<{
 					title: string|null;
-					label: string;
+					label?: string;
 					value: string;
 				}>;
 				/**
@@ -74,6 +78,17 @@ type ModuleRootState = {
 				 * Defaults to the first element in the within.elements array, but null if none are defined.
 				 */
 				sentenceElement: string|null;
+			};
+
+			/** Alignment relation types available in a parallel corpus, e.g. word, sentence or paragraph alignment. */
+			alignBy: {
+				enabled: boolean;
+				elements: Array<{
+					title: string|null;
+					label?: string;
+					value: string;
+				}>;
+				defaultValue: string;
 			};
 		}
 	};
@@ -148,6 +163,8 @@ type ModuleRootState = {
 		customViews: CustomView[],
 
 		shared: {
+			/** Show a widget to enable quick switching of the concordanceAnnotationId if there are multiple possibilities (example - show phonetic texts vs written texts ?). */
+			concordanceAnnotationIdOptions: string[],
 			/** What annotation to use for displaying of [before, hit, after] and snippets. Conventionally the main annotation. */
 			concordanceAnnotationId: string;
 			/** Optionally run a function on all retrieved snippets to arbitrarily process the data (we use this to format the values in some annotations for display purposes). */
@@ -238,7 +255,9 @@ type ModuleRootState = {
 // Then is used to initialize the live store again
 const initialState: ModuleRootState = {
 	search: {
-		simple: {},
+		simple: {
+			searchAnnotationId: '',
+		},
 		extended: {
 			searchAnnotationIds: [],
 			splitBatch: {
@@ -260,6 +279,12 @@ const initialState: ModuleRootState = {
 				enabled: true,
 				elements: [],
 				sentenceElement: null
+			},
+
+			alignBy: {
+				enabled: false,
+				elements: [],
+				defaultValue: '',
 			},
 		}
 	},
@@ -291,6 +316,7 @@ const initialState: ModuleRootState = {
 			component: 'ResultsView'
 		}],
 		shared: {
+			concordanceAnnotationIdOptions: [],
 			concordanceAnnotationId: '',
 			concordanceSize: 50,
 			transformSnippets: null,
@@ -361,7 +387,6 @@ const getState = (() => {
 })();
 
 const get = {
-
 };
 
 const privateActions = {
@@ -374,7 +399,11 @@ const privateActions = {
 
 const actions = {
 	search: {
-		simple: {},
+		simple: {
+			searchAnnotationId: b.commit((state, id: string) => validateAnnotations([id], id => `Trying to display Annotation ${id} in the simple search, but it does not exist`, _ => true, _ => '', r => {
+				state.search.simple.searchAnnotationId = r[0];
+			}), 'search_simple_searchAnnotationId'),
+		},
 		extended: {
 			searchAnnotationIds: b.commit((state, ids: string[]) => validateAnnotations(ids,
 				id => `Trying to display Annotation ${id} in the extended search, but it does not exist`,
@@ -443,6 +472,15 @@ const actions = {
 					if (state.search.shared.within.elements.findIndex(e => e.value === payload) >= 0 )
 						state.search.shared.within.sentenceElement = payload;
 				}, 'search_shared_within_sentenceElement')
+			},
+			/** Alignment relation types available in a parallel corpus, e.g. word, sentence or paragraph alignment. */
+			alignBy: {
+				enable: b.commit((state, payload: boolean) => state.search.shared.alignBy.enabled = payload, 'search_shared_alignBy_enable'),
+				elements: b.commit((state, payload: ModuleRootState['search']['shared']['alignBy']['elements']) => {
+					state.search.shared.alignBy.elements = payload;
+					const defaultValue = payload[0]?.value ?? '';
+					state.search.shared.alignBy.defaultValue = defaultValue;
+				}, 'search_shared_alignBy_annotations'),
 			},
 		}
 	},
@@ -521,6 +559,12 @@ const actions = {
 			}
 		}, 'removeCustomView'),
 		shared: {
+			concordanceAnnotationIdOptions: b.commit((state, ids: string[]) => validateAnnotations(ids,
+				id => `Trying to set available option for concordance Annotation '${id}', but it does not exist`,
+				a => a.hasForwardIndex,
+				id => `Trying to set available option for concordance Annotation '${id}', but it does not have the required forward index.`,
+				r => state.results.shared.concordanceAnnotationIdOptions = r
+			), 'shared_concordanceAnnotationIdOptions'),
 			concordanceAnnotationId: b.commit((state, id: string) => validateAnnotations([id],
 				_ => `Trying to display Annotation '${id}' as concordance and snippet text, but it does not exist`,
 				a => a.hasForwardIndex,
@@ -562,7 +606,7 @@ const actions = {
 				id => `Trying to allow grouping by Annotation '${id}', but it does not have the required forward index.`,
 				r => {
 					const defaultId = state.explore.defaultGroupAnnotationId;
-					r = state.results.shared.groupAnnotationIds = r;
+					state.results.shared.groupAnnotationIds = r;
 					if (!r.includes(defaultId)) {
 						if (defaultId) { // don't warn when it was unconfigured before (e.g. '')
 							console.warn(`[results.shared.groupAnnotationIds] - Resetting default selection for explore.defaultGroupAnnotationId from '${defaultId}' to '${r[0]}' because it's not in the configured list ${JSON.stringify(r)}`);
@@ -577,7 +621,7 @@ const actions = {
 				_ => true, _ => '',
 				r => {
 					const defaultId = state.explore.defaultGroupMetadataId;
-					r = state.results.shared.groupMetadataIds = r;
+					state.results.shared.groupMetadataIds = r;
 					if (!r.includes(defaultId)) {
 						if (defaultId) { // don't warn when it was unconfigured before (e.g. '')
 							console.warn(`[results.shared.groupMetadataIds] - Resetting default selection for explore.defaultGroupMetadataId from '${defaultId}' to '${r[0]}' because it's not in the configured list ${JSON.stringify(r)}`);
@@ -760,7 +804,7 @@ const init = () => {
 		if (!g.isRemainderGroup) { return g.entries; }
 		const hasNonRemainderGroup = i > 0; // remainder groups is always at the end
 		// remainder group is hidden unless there's no other group. Also internal annotations in the remainder group are always hidden.
-		return hasNonRemainderGroup ? [] : g.entries.filter(id => allAnnotationsMap[id]?.isInternal === false);
+		return hasNonRemainderGroup ? [] : g.entries.filter(annotationName => allAnnotationsMap[annotationName]?.isInternal === false);
 	});
 
 	// Metadata/filters (extended, advanced, expert, explore)
@@ -783,6 +827,10 @@ const init = () => {
 	// Always remove any possible bogus annotations set by invalid configs
 	// And then replace with default values if not configured
 	// The setters have builtin validation. So call them, then check if a valid was set, and if not, replace with default.
+	if (initialState.search.simple.searchAnnotationId)
+		actions.search.simple.searchAnnotationId(initialState.search.simple.searchAnnotationId);
+	if (!getState().search.simple.searchAnnotationId) actions.search.simple.searchAnnotationId(mainAnnotation.id);
+
 	actions.search.extended.searchAnnotationIds(initialState.search.extended.searchAnnotationIds);
 	if (!getState().search.extended.searchAnnotationIds.length) actions.search.extended.searchAnnotationIds(defaultAnnotationsToShow);
 
@@ -818,7 +866,41 @@ const init = () => {
 			}
 		}
 
-		// blacklab 4.0 removed the 'starttag' annotation. We have to retrieve values from the relations object instead
+		function setValuesForAlignBy(validValues?: AppTypes.NormalizedAnnotation['values']) {
+			if (!validValues?.length) {
+				console.warn('Align by not supported in this corpus, no parallel relations indexed');
+				actions.search.shared.alignBy.enable(false);
+				return;
+			};
+
+			validValues.forEach(v => {
+				if (!v.label.trim() || v.label === v.value) {
+					if (v.value.endsWith('-alignment'))
+						v.label = v.value.slice(0, -10); // e.g. word-alignment -> word
+					else if (!v.value) { v.label = 'EMPTY'; }
+					else { v.label = v.value; }
+				}
+			});
+
+			validValues.sort((a, b) => {
+				// "word" should be the first option, if it exists
+				if (a.label.toLowerCase() === 'word') {
+					if (a.label === b.label)
+						return 0;
+					return -1;
+				} else if (b.label.toLowerCase() === 'word') {
+					return 1;
+				}
+				return a.label.localeCompare(b.label)
+			});
+
+			actions.search.shared.alignBy.elements(validValues);
+		}
+
+		// In BlackLab 4.0, the 'starttag' annotation was renamed to '_relation' and is now used to index
+		// (dependency, parallel) relations as well. We could get the list of values for this annotation and
+		// decode them, but this makes us depend on implementation details. The new /relations endpoint gives
+		// us the same information in a portable way.
 		const relations = CorpusStore.getState().corpus!.relations;
 		setValuesForWithin(Object.keys(relations.spans||{}).map(v => ({value: v, label: v, title: null})));
 
@@ -827,10 +909,20 @@ const init = () => {
 		if (!getState().search.shared.within.sentenceElement && getState().search.shared.within.elements.length) {
 			const labelsOrValues = ['sentence', 's', 'sen', 'sent', 'paragraph', 'p', 'par', 'para', 'verse'];
 			// process the labels in order or preference.
-			const defaultWithin = labelsOrValues.flatMap(l => state.search.shared.within.elements.find(e => e.label.includes(l) || e.value.includes(l)) || [])[0]
+			const defaultWithin = labelsOrValues.flatMap(l => state.search.shared.within.elements.find(e => (e.label && e.label.includes(l)) || e.value.includes(l)) || [])[0]
 			if (defaultWithin) {
 				actions.search.shared.within.sentenceElement(defaultWithin.value);
 			}
+		}
+
+		// get parallel relations types for "align by" selector
+		if (relations.relations) {
+			// Get relation types for parallel relations to all target fields in a set
+			const relTypes = new Set(Object.keys(relations.relations)
+				.filter(v => v.startsWith('al__')) // by convention, parallel relations use class 'al__TARGETVERSION', e.g. 'al__nl'
+				.flatMap(v => Object.keys(relations.relations![v])));
+			const alignByValues = [...relTypes].map(v => ({value: v, label: v, title: null}));
+			setValuesForAlignBy(alignByValues);
 		}
 	}
 
@@ -869,6 +961,9 @@ const init = () => {
 
 	// Hits table, nothing shown by default, but call the setter to validate what was set.
 	actions.results.hits.shownMetadataIds(initialState.results.hits.shownMetadataIds);
+	// Docs table: validate shown metadata
+	actions.results.docs.shownMetadataIds(initialState.results.docs.shownMetadataIds);
+
 	// Docs table: Show the date column if it is configured
 	if (!getState().results.docs.shownMetadataIds.length) {
 		const dateField = CorpusStore.getState().corpus!.fieldInfo.dateField;
@@ -881,6 +976,8 @@ const init = () => {
 
 	// This one needs manual validation, because the setter just won't do anything if the id is invalid.
 	// And then the invalid id will remain in the state.
+	actions.results.shared.concordanceAnnotationIdOptions(initialState.results.shared.concordanceAnnotationIdOptions);
+	if (!getState().results.shared.concordanceAnnotationIdOptions.length) actions.results.shared.concordanceAnnotationIdOptions([mainAnnotation.id]);
 	{
 		const annot = allAnnotationsMap[initialState.results.shared.concordanceAnnotationId];
 		if (!annot?.hasForwardIndex)
@@ -1136,6 +1233,71 @@ function printCustomizations() {
 	`);
 }
 
+/** This object contains any customization "hook" functions for this corpus.
+ *  It defines defaults that can be overridden from custom JS file(s); see below.
+ */
+const corpusCustomizations = {
+	search: {
+		within: {
+			/** Customize which element(s) to include */
+			include(element: Option) {
+				return true;
+			},
+
+			/** Which, if any, attribute filter fields should be displayed for this element? */
+			attributes(element: Option): string[]|Option[] {
+				return [];
+			},
+
+			/*
+			// Alternative approach: allow direct access to the elements array, so custom JS
+			// can change that. But this relies on the corpus being loaded before the custom JS
+			// (currently not the case), and might run into issues with reactivity(?)
+
+			get elements(): Option[] {
+				return getState().search.shared.within.elements;
+			},
+
+			set elements(elements: { value: string, title: string|null, label?: string }[]) {
+				actions.search.shared.within.elements(elements);
+			}
+			*/
+		},
+
+		metadata: {
+			/** Show this metadata search field? (return null for default behaviour) */
+			show(name: string): boolean|null {
+				return null;
+			}
+		}
+	},
+
+	results: {
+		matchInfoHighlightStyle: (matchInfo: HighlightSection): string|null => {
+			return null; // fall back to default behaviour
+		}
+	}
+};
+
+/** This lets custom JS files call frontend.customize((corpus) => { ... });
+  * to customize any of the above "hooks". Doing this via a function instead of
+  * direct access to a global object gives us more flexibility to change things
+  * in the future.
+  *
+  * Example of a simple custom.js file using this:
+  * <code>
+  * frontend.customize((corpus) => {
+  *   corpus.search.within.include = (element) => element.value === 'p';
+  *   corpus.search.within.displayName = (element) => element.value === 'p' ? 'Paragraph' : null;
+  * });
+  * </code>
+  */
+(window as any).frontend = {
+	customize(callback: ((corpus: any) => void)) {
+		callback(corpusCustomizations);
+	}
+};
+
 (window as any).printCustomJs = printCustomizations;
 
 export {
@@ -1148,4 +1310,6 @@ export {
 	init,
 
 	namespace,
+
+	corpusCustomizations,
 };

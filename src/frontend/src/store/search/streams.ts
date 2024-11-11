@@ -22,8 +22,9 @@ import * as Api from '@/api';
 
 import * as BLTypes from '@/types/blacklabtypes';
 import jsonStableStringify from 'json-stable-stringify';
-import { debugLog } from '@/utils/debug';
+import { debugLog, debugLogCat, showDebugCat } from '@/utils/debug';
 import Vue from 'vue';
+import { RecursiveRequired } from '@/types/helpers';
 
 type QueryState = {
 	params?: BLTypes.BLSearchParameters,
@@ -60,10 +61,10 @@ export const selectedSubCorpus$ = merge(
 			includetokencount: true,
 			waitfortotal: true
 		})),
-		switchMap(params => new Observable<Notification<BLTypes.BLDocResults>>(subscriber => {
+		switchMap(params => new Observable<Notification<RecursiveRequired<BLTypes.BLDocResults>>>(subscriber => {
 			// Speedup: we know the totals beforehand when there are no filters: mock a reply
 			if (!params.filter) {
-				subscriber.next(Notification.createNext<BLTypes.BLDocResults>({
+				subscriber.next(Notification.createNext<RecursiveRequired<BLTypes.BLDocResults>>({
 					docs: [],
 					summary: {
 						numberOfDocs: CorpusStore.getState().corpus!.documentCount,
@@ -77,12 +78,9 @@ export const selectedSubCorpus$ = merge(
 				return;
 			}
 
-			const {request, cancel} = Api.blacklab.getDocs(INDEX_ID, params, {
+			const {request, cancel} = Api.blacklab.getDocs<RecursiveRequired<BLTypes.BLDocResults>>(INDEX_ID, params, {
 				headers: { 'Cache-Control': 'no-cache' }
-			}) as {
-				request: Promise<BLTypes.BLDocResults>;
-				cancel: Api.Canceler;
-			};
+			});
 
 			from(request).pipe(materialize()).subscribe(subscriber);
 
@@ -265,7 +263,8 @@ url$.pipe(
 			} : ExploreStore.defaults,
 			patterns: query.form === 'search' ? {
 				...PatternStore.defaults,
-				[query.subForm]: query.formState
+				[query.subForm]: query.formState,
+				parallelFields: query.parallelFields,
 			} : PatternStore.defaults,
 			interface: {
 				form: query.form ? query.form : 'search',
@@ -286,8 +285,10 @@ url$.pipe(
 	})
 )
 .subscribe(v => {
-	debugLog('Adding/updating query in query history, adding browser history entry, and reporting to ga', v.url, v.entry);
+	if (showDebugCat('history'))
+		debugLog('Adding/updating query in query history, adding browser history entry, and reporting to ga', v.url, v.entry);
 	HistoryStore.actions.addEntry({entry: v.entry, pattern: v.params && v.params.patt, url: v.url});
+	debugLogCat('history', `Calling pushState with entry: ${JSON.stringify(v.entry)} and url: ${v.url}`);
 	history.pushState(v.entry, '', v.url);
 
 	ga('set', v.url);
