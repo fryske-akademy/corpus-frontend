@@ -6,6 +6,7 @@
 		</div>
 		<slot name="groupBy"/>
 		<slot name="pagination"/>
+		<slot name="annotation-switcher"/>
 
 		<div class="form-group">
 			<div class="btn-group" style="margin: auto;">
@@ -181,9 +182,9 @@ export default Vue.extend({
 
 				hitGroups.forEach(g => {
 					stage1.push({
-						id: g.identity || '[unknown]',
+						id: g.identity || this.$t('results.groupBy.groupNameWithoutValue').toString(),
 						size: g.size,
-						displayname: decodePropertyValue(g) || '[unknown]',
+						displayname: decodePropertyValue(g) || this.$t('results.groupBy.groupNameWithoutValue').toString(),
 
 						'r.d': summary.numberOfDocs,
 						'r.t': summary.tokensInMatchingDocuments!, // FIXME augment request to make this available
@@ -218,7 +219,7 @@ export default Vue.extend({
 					stage1.push({
 						id: g.identity,
 						size: g.size,
-						displayname: decodePropertyValue(g) || '[unknown]',
+						displayname: decodePropertyValue(g) || this.$t('results.groupBy.groupNameWithoutValue').toString(),
 
 						'r.d': summary.numberOfDocs,
 						'r.t': summary.tokensInMatchingDocuments!, // FIXME augment request to make this available

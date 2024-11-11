@@ -42,6 +42,7 @@ type ModuleRootStateSearch<K extends keyof PatternModule.ModuleRootState> = {
 	subForm: K;
 
 	formState: PatternModule.ModuleRootState[K];
+	parallelFields: PatternModule.ModuleRootState['parallelFields'];
 	filters: FilterModule.ModuleRootState;
 	gap: GapModule.ModuleRootState;
 };
@@ -51,6 +52,7 @@ type ModuleRootStateExplore<K extends keyof ExploreModule.ModuleRootState> = {
 	subForm: K;
 
 	formState: ExploreModule.ModuleRootState[K];
+	parallelFields: PatternModule.ModuleRootState['parallelFields'];
 	filters: FilterModule.ModuleRootState;
 	gap: GapModule.ModuleRootState;
 };
@@ -59,6 +61,7 @@ type ModuleRootStateNone = {
 	form: null;
 	subForm: null;
 	formState: null;
+	parallelFields: null;
 	filters: null;
 	gap: null;
 };
@@ -69,6 +72,7 @@ const initialState: ModuleRootStateNone = {
 	form: null,
 	subForm: null,
 	formState: null,
+	parallelFields: null,
 	filters: null,
 	gap: null
 };
@@ -78,17 +82,52 @@ const b = getStoreBuilder<RootState>().module<ModuleRootState>(namespace, Object
 const getState = b.state();
 
 const get = {
-	patternString: b.read((state): string|undefined =>
-		state.form === 'search' ? getPatternStringSearch(state.subForm, {[state.subForm]: state.formState} as any /** egh, feel free to refactor */, CorpusModule.get.allAnnotationsMap()) :
-		state.form === 'explore' ? getPatternStringExplore(state.subForm, {[state.subForm]: state.formState} as any /** egh, feel free to refactor */, CorpusModule.get.allAnnotationsMap()) :
-		undefined,
+	/**
+	 * Return the sourceField of the query.
+	 * We only return a value here for parallel corpora.
+	 * In all other cases, we let BlackLab decide the main search field.
+	 * (In practice it will be the mainAnnotatedField)
+	 */
+	annotatedFieldName: b.read((state): string|undefined => {
+		switch (state.form) {
+			case 'search': return state.parallelFields.source || undefined;
+			case 'explore': return undefined; // always use default field.
+			default: return undefined;
+		}
+	}, 'annotatedFieldName'),
+	patternString: b.read((state, getters, rootState): string|undefined => {
+		if (!state.subForm) return undefined;
+
+		const formState = {
+			[state.subForm as string]: state.formState,
+			parallelFields: state.parallelFields,
+		} as Partial<ModuleRootStateSearch<keyof PatternModule.ModuleRootState>>; /** egh, feel free to refactor */
+		const annotations = CorpusModule.get.allAnnotationsMap();
+		switch (state.form) {
+		case 'search':
+			return getPatternStringSearch(state.subForm, formState as any, rootState.ui.search.shared.alignBy.defaultValue);
+		case 'explore':
+			return getPatternStringExplore(state.subForm, formState as any, annotations);
+		default:
+			return undefined;
+		}
+	},
 	'patternString'),
 	/** Human-readable version of the query for use in history, summaries, etc. */
-	patternSummary: b.read((state): string|undefined =>
-		state.form === 'search' ? getPatternSummarySearch(state.subForm, {[state.subForm]: state.formState} as any /** egh, feel free to refactor */) :
-		state.form === 'explore' ? getPatternSummaryExplore(state.subForm, {[state.subForm]: state.formState} as any /** egh, feel free to refactor */, CorpusModule.get.allAnnotationsMap()) :
-		undefined,
-	'patternSummary'),
+	patternSummary: b.read((state, getters, rootState): string|undefined => {
+		const formState = {
+			[state.subForm as string]: state.formState,
+			parallelFields: state.parallelFields,
+		} as any; /** egh, feel free to refactor */
+		switch (state.form) {
+		case 'search':
+			return getPatternSummarySearch(state.subForm, formState, rootState.ui.search.shared.alignBy.defaultValue);
+		case 'explore':
+			return getPatternSummaryExplore(state.subForm, formState, CorpusModule.get.allAnnotationsMap());
+		default:
+			return undefined;
+		}
+	}, 'patternSummary'),
 	filterString: b.read((state): string|undefined => {
 		if (!state.form) { return undefined; }
 		return getFilterString(Object.values(state.filters).sort((a, b) => a.id.localeCompare(b.id)));
