@@ -1,6 +1,6 @@
-import {NormalizedIndex, NormalizedAnnotation, NormalizedAnnotatedField, NormalizedMetadataField, NormalizedFormat, NormalizedMetadataGroup, NormalizedAnnotationGroup, NormalizedIndexBase} from '@/types/apptypes';
+import type {NormalizedIndex, NormalizedAnnotation, NormalizedAnnotatedField, NormalizedMetadataField, NormalizedFormat, NormalizedMetadataGroup, NormalizedAnnotationGroup, NormalizedIndexBase} from '@/types/apptypes';
 import * as BLTypes from '@/types/blacklabtypes';
-import { mapReduce } from '@/utils';
+import { getParallelFieldParts, mapReduce, PARALLEL_FIELD_SEPARATOR } from '@/utils';
 
 /** Find the annotation that contains annotationId as on of its subAnnotations. */
 function findParentAnnotation(annotatedField: BLTypes.BLAnnotatedField, annotationId: string): string|undefined {
@@ -62,8 +62,8 @@ function normalizeAnnotation(annotatedField: BLTypes.BLAnnotatedField, annotatio
 	return {
 		annotatedFieldId,
 		caseSensitive: annotation.sensitivity === 'SENSITIVE_AND_INSENSITIVE',
-		description: annotation.description,
-		displayName: annotation.displayName || annotationId,
+		defaultDescription: annotation.description,
+		defaultDisplayName: annotation.displayName || annotationId,
 		hasForwardIndex: annotation.hasForwardIndex,
 		id: annotationId,
 		isInternal: annotation.isInternal,
@@ -78,8 +78,8 @@ function normalizeAnnotation(annotatedField: BLTypes.BLAnnotatedField, annotatio
 
 function normalizeMetadata(field: BLTypes.BLMetadataField): NormalizedMetadataField {
 	return {
-		description: field.description,
-		displayName: field.displayName || field.fieldName,
+		defaultDescription: field.description,
+		defaultDisplayName: field.displayName || field.fieldName,
 		id: field.fieldName,
 		uiType: normalizeMetadataUIType(field),
 		values: ['select', 'checkbox', 'radio'].includes(normalizeMetadataUIType(field)) ? Object.keys(field.fieldValues).map(value => {
@@ -96,27 +96,31 @@ function normalizeAnnotatedField(field: BLTypes.BLAnnotatedField): NormalizedAnn
 	const annotations: Array<[string, BLTypes.BLAnnotation]> = BLTypes.isAnnotatedFieldV1(field) ? Object.entries(field.properties) : Object.entries(field.annotations);
 	const mainAnnotationId: string = BLTypes.isAnnotatedFieldV1(field) ? field.mainProperty : field.mainAnnotation;
 
+	const isParallel = field.fieldName.includes(PARALLEL_FIELD_SEPARATOR);
+	const parallelFieldParts = getParallelFieldParts(field.fieldName);
 	return {
 		annotations: mapReduce(annotations.map(([id, annot]) => normalizeAnnotation(field, id, annot)), 'id'),
-		description: field.description,
-		displayName: field.displayName,
-		// displayOrder: Object.keys(annotations).sort((a, b) => annotationDisplayOrder[field.fieldName][a] - annotationDisplayOrder[field.fieldName][b]),
+		defaultDescription: field.description,
+		defaultDisplayName: field.displayName,
 		hasContentStore: field.hasContentStore,
 		hasLengthTokens: field.hasLengthTokens,
 		hasXmlTags: field.hasXmlTags,
 		id: field.fieldName,
 		isAnnotatedField: field.isAnnotatedField,
 		mainAnnotationId,
+		isParallel,
+		prefix: parallelFieldParts.prefix,
+		version: parallelFieldParts.version,
 	};
 }
 
 function normalizeAnnotationGroups(blIndex: BLTypes.BLIndexMetadata): NormalizedAnnotationGroup[] {
 	let annotationGroupsNormalized: NormalizedAnnotationGroup[] = [];
-	const fieldId = blIndex.mainAnnotatedField;
+	const fieldId = blIndex.mainAnnotatedField || Object.keys(blIndex.annotatedFields)[0];
 	const field = blIndex.annotatedFields[fieldId];
 
 	const annotations = BLTypes.isAnnotatedFieldV1(field) ? field.properties : field.annotations;
-	const idsNotInGroups = new Set(Object.keys(annotations));
+	const annotationNamesNotInGroups = new Set(Object.keys(annotations));
 
 	let hasUserDefinedGroup = false;
 
@@ -126,12 +130,12 @@ function normalizeAnnotationGroups(blIndex: BLTypes.BLIndexMetadata): Normalized
 			const normalizedGroup: NormalizedAnnotationGroup = {
 				annotatedFieldId: fieldId,
 				id: group.name,
-				entries: group.annotations.filter(id => annotations[id] != null),
+				entries: group.annotations.filter(annotationName => annotations[annotationName] != null),
 				isRemainderGroup: false
 			};
 			if (normalizedGroup.entries.length) {
 				annotationGroupsNormalized.push(normalizedGroup);
-				normalizedGroup.entries.forEach(id => idsNotInGroups.delete(id));
+				normalizedGroup.entries.forEach(annotationName => annotationNamesNotInGroups.delete(annotationName));
 				hasUserDefinedGroup = true;
 			}
 		}
@@ -140,25 +144,28 @@ function normalizeAnnotationGroups(blIndex: BLTypes.BLIndexMetadata): Normalized
 	// Add all remaining annotations to the remainder group.
 	// First add all explicitly ordered annotations (annotatedField.displayOrder).
 	// Finally add everything else at the end, sorted by their displayNames.
-	if (idsNotInGroups.size) {
-		const remainingAnnotationsToAdd = new Set(idsNotInGroups);
-		const idsInRemainderGroup: string[] = [];
+	if (annotationNamesNotInGroups.size) {
+		const remainingAnnotationsToAdd = new Set(annotationNamesNotInGroups);
+		const annotationNamesInRemainderGroup: string[] = [];
 
 		// annotations in displayOrder
 		if (!BLTypes.isAnnotatedFieldV1(field) && field.displayOrder) {
-			field.displayOrder.forEach(id => {
-				if (remainingAnnotationsToAdd.has(id)) {
-					remainingAnnotationsToAdd.delete(id);
-					idsInRemainderGroup.push(id);
+			field.displayOrder.forEach(annotationName => {
+				if (remainingAnnotationsToAdd.has(annotationName)) {
+					remainingAnnotationsToAdd.delete(annotationName);
+					annotationNamesInRemainderGroup.push(annotationName);
 				}
 			});
 		}
-		// Finally all annotations without entry in displayOrder
-		idsInRemainderGroup.push(...[...remainingAnnotationsToAdd].sort((a, b) => annotations[a].displayName.localeCompare(annotations[b].displayName)));
+		// Finally all non-internal annotations without entry in displayOrder
+		const sortedFilteredAnnotations = [...remainingAnnotationsToAdd]
+			.filter(annotationName => !annotations[annotationName].isInternal) // don't add _relation, punct, etc.
+			.sort((a, b) => annotations[a].displayName.localeCompare(annotations[b].displayName));
+		annotationNamesInRemainderGroup.push(...sortedFilteredAnnotations);
 		// And create the group.
 		annotationGroupsNormalized.push({
 			annotatedFieldId: fieldId,
-			entries: idsInRemainderGroup,
+			entries: annotationNamesInRemainderGroup,
 			id: 'Other',
 			// If there was a group defined from the index config, this is indeed the remainder group, otherwise this is just a normal group.
 			isRemainderGroup: hasUserDefinedGroup
@@ -243,7 +250,7 @@ export function normalizeIndex(blIndex: BLTypes.BLIndexMetadata, relations: BLTy
 		tokenCount: blIndex.tokenCount || 0,
 		status: blIndex.status,
 		indexProgress: blIndex.indexProgress || null,
-		mainAnnotatedField: blIndex.mainAnnotatedField,
+		mainAnnotatedField: blIndex.mainAnnotatedField || Object.keys(blIndex.annotatedFields)[0],
 		relations
 	};
 }
@@ -271,31 +278,3 @@ export function normalizeFormats(formats: BLTypes.BLFormats): NormalizedFormat[]
 	return Object.entries(formats.supportedInputFormats)
 	.map(([key, value]) => normalizeFormat(key, value));
 }
-
-// ---------------------------------------
-// Fixup function for BlackLab 2.0 release
-// ---------------------------------------
-
-// tslint:disable
-/**
- * Remove at blacklab 2.1 release.
- * Blacklab went from sending document metadata as string to sending as string[].
- * We temporarily bridge this by mapping old responses to also be string[].
- * See api/index.ts
- */
-export function fixDocInfo(d: BLTypes.BLDocInfo) {
-	for (const key in d) switch (key) {
-		case 'lengthInTokens':
-		case 'mayView':
-			continue;
-		default: {
-			const v = d[key]
-			if (typeof v === 'string') {
-				d[key] = [v]
-			} else {
-				return;
-			}
-		}
-	}
-}
-// tslint: enable

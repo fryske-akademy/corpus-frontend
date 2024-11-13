@@ -20,7 +20,7 @@ export default abstract class UrlStateParser<T> {
 		this.params = uri.search(true) || {};
 	}
 
-	public abstract get(): T;
+	public abstract get(): Promise<T>;
 
 	/**
 	 * Get the parameter by the name of paramname from our query parameters.

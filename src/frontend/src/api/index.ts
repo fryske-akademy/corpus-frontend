@@ -75,6 +75,8 @@ export const blacklabPaths = {
 	root: () =>                                     './',
 	index: (indexId: string) =>                     `${indexId}/`,
 	indexStatus: (indexId: string) =>               `${indexId}/status/`,
+	field: (indexId: string, fieldName: string) =>  `${indexId}/fields/${fieldName}/`,
+
 	/** Retrieve the relations/inline tags in the corpus. Since 4.0 */
 	relations: (indexId: string) =>                 `${indexId}/relations/`,
 	documentUpload: (indexId: string) =>            `${indexId}/docs/`,
@@ -89,6 +91,7 @@ export const blacklabPaths = {
 	docs: (indexId: string) =>                      `${indexId}/docs/`,
 	docsCsv: (indexId: string) =>                   `${indexId}/docs-csv/`,
 	snippet: (indexId: string, docId: string) =>    `${indexId}/docs/${docId}/snippet/`,
+	parsePattern: (indexId: string) =>              `${indexId}/parse-pattern/`,
 
 	// Is used outside the axios endpoint we created above, so prefix with the correct location
 	autocompleteAnnotation: (
@@ -115,7 +118,7 @@ export const blacklab = {
 
 	getCorpora: (requestParameters?: AxiosRequestConfig) => endpoints.blacklab
 		.get<BLTypes.BLServer>(blacklabPaths.root(), undefined, requestParameters)
-		.then(r => Object.entries(r.corpora).map(([id, c]) => normalizeIndexBase(c, id))),
+		.then(r => Object.entries({...r.corpora, ...r.indices}).map(([id, c]) => normalizeIndexBase(c, id))),
 
 	getCorpusStatus: (id: string, requestParamers?: AxiosRequestConfig) => endpoints.blacklab
 		.get<BLTypes.BLIndex>(blacklabPaths.indexStatus(id), undefined, requestParamers)
@@ -125,6 +128,9 @@ export const blacklab = {
 		endpoints.blacklab.get<BLTypes.BLIndexMetadata>(blacklabPaths.index(id), undefined, requestParameters),
 		endpoints.blacklab.get<BLTypes.BLRelationInfo>(blacklabPaths.relations(id), undefined, requestParameters)
 	]).then(([index, relations]) => normalizeIndex(index, relations)),
+
+	getAnnotatedField: (corpusId: string, fieldName: string, requestParameters?: AxiosRequestConfig) => endpoints.blacklab
+		.get<BLTypes.BLAnnotatedField>(blacklabPaths.field(corpusId, fieldName), undefined, requestParameters),
 
 	getShares: (id: string, requestParameters?: AxiosRequestConfig) => endpoints.blacklab
 		.get<{'users[]': BLTypes.BLShareInfo}>(blacklabPaths.shares(id), undefined, requestParameters)
@@ -219,6 +225,18 @@ export const blacklab = {
 	getRelations: (indexId: string, requestParameters?: AxiosRequestConfig) => endpoints.blacklab
 		.get<BLTypes.BLRelationInfo>(blacklabPaths.relations(indexId), undefined, requestParameters),
 
+	getParsePattern: (indexId: string, pattern: string, requestParameters?: AxiosRequestConfig) => {
+		let request: Promise<{ parsed: { bcql: string, json: any } }>;
+		if (!indexId) {
+			request = Promise.reject(new ApiError('Error', 'No index specified.', 'Internal error', undefined));
+		} else if (!pattern) {
+			request = Promise.reject(new ApiError('Info', 'Cannot parse without pattern.', 'No results', undefined));
+		} else {
+			request = endpoints.blacklab.getOrPost(blacklabPaths.parsePattern(indexId), { patt: pattern }, { ...requestParameters });
+		}
+		return request;
+	},
+
 	getHits: (indexId: string, params: BLTypes.BLSearchParameters, requestParameters?: AxiosRequestConfig) => {
 		const {token: cancelToken, cancel} = axios.CancelToken.source();
 
@@ -299,20 +317,14 @@ export const blacklab = {
 		};
 	},
 
-	getDocs: (indexId: string, params: BLTypes.BLSearchParameters, requestParameters?: AxiosRequestConfig) => {
+	getDocs: <T extends BLTypes.BLDocResults|BLTypes.BLDocGroupResults = BLTypes.BLDocResults|BLTypes.BLDocGroupResults> (indexId: string, params: BLTypes.BLSearchParameters, requestParameters?: AxiosRequestConfig) => {
 		const {token: cancelToken, cancel} = axios.CancelToken.source();
 
-		let request: Promise<BLTypes.BLDocResults|BLTypes.BLDocGroupResults>;
+		let request: Promise<T>;
 		if (!indexId) {
 			request = Promise.reject(new ApiError('Error', 'No index specified', 'Internal error', undefined));
 		} else {
-			request = endpoints.blacklab.getOrPost<BLTypes.BLDocResults|BLTypes.BLDocGroupResults>(blacklabPaths.docs(indexId), params, { ...requestParameters, cancelToken })
-			.then(res => {
-				if (!BLTypes.isDocGroups(res)) {
-					res.docs.forEach(d => fixDocInfo(d.docInfo));
-				}
-				return res;
-			});
+			request = endpoints.blacklab.getOrPost<T>(blacklabPaths.docs(indexId), params, { ...requestParameters, cancelToken })
 		}
 
 		return {
@@ -323,22 +335,25 @@ export const blacklab = {
 
 	/**
 	 *
-	 * @param indexId
-	 * @param docId
+	 * @param indexId the index
+	 * @param docId the document
+	 * @param field the annotatedField to get the snippet from (for parallel documents/corpora which have multiple versions of the same document). If undefined, BlackLab will return the default field.
 	 * @param hitstart
 	 * @param hitend
 	 * @param context either a number (n words before and after, or a "span" type relation (ui.search.shared.within.elements in the store))
 	 * @param requestParameters
 	 * @returns
 	 */
-	getSnippet: (indexId: string, docId: string, hitstart: number, hitend: number, context?: string|number, requestParameters?: AxiosRequestConfig) => {
-		// TODO check if the snippet is still weird.
+	getSnippet: (indexId: string, docId: string, field: string|undefined, hitstart: number, hitend: number, context?: string|number, requestParameters?: AxiosRequestConfig) => {
 		return endpoints.blacklab.getOrPost<BLTypes.BLHit>(blacklabPaths.snippet(indexId, docId), {
 			hitstart,
 			hitend,
-			context
+			context,
+			field,
 		}, requestParameters)
 		.then<BLTypes.BLHit>(r => {
+			// BlackLab doesn't always return the left/right/before/after context fields (at document boundaries)
+			// Fill them in with blanks to simplify rendering code.
 			if (!r.left) r.left = Object.entries(r.match).reduce((acc, [key, value]) => { acc[key] = []; return acc; }, {} as BLTypes.BLHitSnippetPart);
 			if (!r.right) r.right = Object.entries(r.match).reduce((acc, [key, value]) => { acc[key] = []; return acc; }, {} as BLTypes.BLHitSnippetPart);
 			return r;
@@ -365,6 +380,9 @@ export const blacklab = {
 	},
 };
 
+/**
+ * API for corpus-frontend's own webservice
+ */
 export const frontend = {
 	getCorpus: () => endpoints.cf.get<BLTypes.BLIndexMetadata>(frontendPaths.indexInfo()),
 

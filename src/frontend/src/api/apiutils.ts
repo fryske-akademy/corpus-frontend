@@ -25,7 +25,6 @@ export function delayResponse<T>(r: AxiosResponse<T>): Promise<AxiosResponse<T>>
 		setTimeout(() => resolve(r), settings.delay);
 	});
 }
-
 export function delayError(e: AxiosError): Promise<AxiosResponse<never>> {
 	return new Promise((resolve, reject) => {
 		setTimeout(() => reject(e), settings.delay);
