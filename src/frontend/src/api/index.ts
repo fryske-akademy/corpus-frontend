@@ -2,7 +2,7 @@ import axios, {Canceler, AxiosRequestConfig} from 'axios';
 import * as qs from 'qs';
 
 import {createEndpoint} from '@/api/apiutils';
-import {normalizeIndex, fixDocInfo, normalizeFormat, normalizeIndexBase} from '@/utils/blacklabutils';
+import {normalizeIndex, normalizeFormat, normalizeIndexBase} from '@/utils/blacklabutils';
 
 import * as BLTypes from '@/types/blacklabtypes';
 import { ApiError, NormalizedIndex, NormalizedIndexBase } from '@/types/apptypes';
@@ -14,9 +14,17 @@ import { User } from 'oidc-client-ts';
 type API = ReturnType<typeof createEndpoint>;
 
 const endpoints = {
+
+	// Communicates with the BlackLab Server instance
 	blacklab: null as any as API,
+
+	// Communicates with the frontend's own Java backend (which in turn can communicate with BLS)
 	cf: null as any as API,
+
+	//
 	gloss: null as any as API,
+
+	//
 	concept: null as any as API,
 };
 
@@ -26,6 +34,8 @@ export function init(which: keyof typeof endpoints, url: string, user: User|null
 	if (endpoints[which]) throw new Error(`Endpoint ${which} already initialized`);
 	const headers = {};
 	if (user) {
+		// Authorization header must be re-created on each request, as the token might have changed
+		// So wrap in a getter
 		Object.defineProperty(headers, 'Authorization', {
 			get() { return `Bearer ${user.access_token}`; },
 			enumerable: true,
@@ -35,8 +45,6 @@ export function init(which: keyof typeof endpoints, url: string, user: User|null
 	endpoints[which] = createEndpoint({
 		baseURL: url.replace(/\/*$/, '/'),
 		paramsSerializer: params => qs.stringify(params),
-		// Authorization header must be re-created on each request, as the token might have changed
-		// So wrap in a getter
 		headers
 	});
 }
