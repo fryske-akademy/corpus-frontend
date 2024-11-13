@@ -4,7 +4,6 @@
     DOCUMENT_ID = "$esc.javascript($docId)";
     DOCUMENT_LENGTH = $docLength;
 
-    PAGINATION_ENABLED = $paginationEnabled;
     PAGE_SIZE = $pageSize;
     PAGE_START = $pageStart;
     PAGE_END = $pageEnd;
@@ -24,7 +23,8 @@
          #if(!$article_content_restricted)
 	         <div id="content" class="tab-pane active">
 	            <div id="vue-root-pagination"></div>
-	
+                 <div id="vue-root-parallel-version"></div><!-- parallel corpus: version name and length -->
+
 	            #set($unescaped = $article_content) ## see BaseResponse.java
 	            $!unescaped
 	
