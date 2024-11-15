@@ -109,6 +109,17 @@ The application will normally look for this file in the same configuration direc
 - `/etc/blacklab` (Linux)
 
 > **NOTE:** if you don't want to use BlackLab's config directory, specify the `CORPUS_FRONTEND_CONFIG_DIR` environment variable or place the file in the same directory as the `.war` file. The latter method also works if you want to run multiple instances of the frontend on the same server.
+The file name must be the same as the `context path` of the corpus-frontend application.
+That's the URL under which the corpus-frontend is reachable in the browser.
+Often, if you don't configure the `context path`, the `context path` will be the name of the `.war` file.  
+
+Examples:
+- for `corpus-frontend.war` -> `/corpus-frontend` in browser -> `corpus-frontend.properties` in any of the above locations
+- for `my-frontend.war` -> `/my-frontend` in browser -> `my-frontend.properties` file name
+- for `/test/corpus-frontend` in browser, the file should be in the `test/corpus-frontend.properties` dir in above locations.
+- when you are behind a proxy, use the `context path` of proxied application, for example
+    - `ProxyPass "/frisian-corpora" "http://host:port/TEST/corpus-frontend"`
+        - `/frisian-corpora` in browser -> proxied to `/TEST/corpus-frontend` -> use `TEST/corpus-frontend.properties`
 
 Example file (most values shown here are the default values):
 

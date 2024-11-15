@@ -211,7 +211,7 @@ import Slider from 'vue-slider-component';
 import 'vue-slider-component/theme/default.css'
 import jsonStableStringify from 'json-stable-stringify';
 
-import SelectPicker, { Options } from '@/components/SelectPicker.vue';
+import SelectPicker, { OptGroup, Options } from '@/components/SelectPicker.vue';
 import { getHighlightColors, mergeMatchInfos, snippetParts } from '@/utils/hit-highlighting';
 import { CaptureAndRelation, HitToken, Option, TokenHighlight } from '@/types/apptypes';
 
@@ -273,7 +273,7 @@ export default Vue.extend({
 			delete params.listvalues;
 			params.listmetadatavalues = '__nothing__';
 			params.first = 0;
-			params.number = 1;
+			params.number = 10; // not 1 but 10 because for parallel corpus we need a hit with otherFields (hopefully we'll get one)
 			params.waitfortotal = false;
 			return params;
 		},
@@ -315,23 +315,24 @@ export default Vue.extend({
 			        5); // use default
 		},
 
-		captures(): { name: string, label: string, targetField: string }[] {
+		captures(): { name: string, label: string, targetField: string|undefined }[] {
 			const mi = this.hits?.summary?.pattern?.matchInfos;
+			const sourceField = this.mainSearchField;
 			return Object.entries(mi|| {})
-				.filter(([k, v]) => v.type === 'span' && (!v.fieldName || v.fieldName === this.selectedCriteriumAsPositional?.fieldName))
+				.filter(([k, v]) => v.type === 'span' && (v.fieldName ?? sourceField) === (this.selectedCriteriumAsContext?.fieldName ?? sourceField))
 				.map(([k,v]) => {
 					return {
 						name: k,
 						label: k,
-						targetField: v.fieldName ?? '',
+						targetField: v.fieldName,
 					}
 				});
 		},
 		relations() {
 			const mi = this.hits?.summary?.pattern?.matchInfos;
-			const result: { name: string, label: string, targetField: string }[] = [];
+			const result: { name: string, label: string, targetField: string|undefined }[] = [];
 			Object.entries(mi|| {})
-				.filter(([k, v]) => v.type === 'relation' || v.type === 'list')
+				.filter(([k, v]) => v.type === 'relation')
 				.forEach(([k,v]) => {
 					const sourceInThisField = this.relationSourceInThisField(v);
 					const targetInThisField = this.relationTargetInThisField(v);
@@ -339,7 +340,7 @@ export default Vue.extend({
 						result.push({
 							label: k,
 							name: `${k}`,
-							targetField: this.selectedCriteriumAsPositional?.fieldName ?? '',
+							targetField: this.selectedCriteriumAsPositional?.fieldName,
 						});
 					}
 				});
@@ -411,12 +412,19 @@ export default Vue.extend({
 			}
 
 			const wordAnnotation = UIStore.getState().results.shared.concordanceAnnotationId;
-			const firstHit = this.hits.hits[0];
+			const firstHit = this.hits.hits.find(v => !!v.otherFields) ?? this.hits.hits[0];
 			const targetField = this.selectedCriterium?.fieldName;
 			const hitInField = targetField && targetField.length > 0 && targetField !== this.mainSearchField && firstHit.otherFields ? firstHit.otherFields[targetField] : firstHit;
 			const {annotation, context} = this.selectedCriterium;
 
 			const snippet = snippetParts(hitInField, wordAnnotation, CorpusStore.get.textDirection(), this.colors)
+
+			// Don't highlight the list of relations matchInfo; it doesn't make sense to group on those
+			const removeListMatchInfo = (t: HitToken) => t.captureAndRelation = t.captureAndRelation?.filter(c => c.key.indexOf('[') < 0);
+			snippet.before.forEach(removeListMatchInfo);
+			snippet.match.forEach(removeListMatchInfo);
+				snippet.after.forEach(removeListMatchInfo);
+
 			const position = context.type === 'positional' ? context.position : undefined;
 
 			// Now extract the indices of the tokens that are active (i.e. being grouped on).
@@ -519,13 +527,35 @@ export default Vue.extend({
 				if (this.selectedCriteriumAsContext) {
 					this.selectedCriteriumAsContext.fieldName = v;
 					if (this.selectedCriteriumAsContext.context.type === 'label') {
-						const contextLabel = this.selectedCriteriumAsContext.context as ContextLabel;
-						const label = contextLabel.label;
-						const relPart = this.getInitialRelationPartValue(label);
-						if (relPart) {
-							// There's only one relation part in the selected field; so set it.
-							contextLabel.relation = relPart;
-						}
+						const selectedContext = this.selectedCriteriumAsContext.context as ContextLabel;
+						const selectedLabel = selectedContext.label;
+						// When contextOptions has updated, we need to check if the selected label is still in the list.
+						Vue.nextTick(() => {
+							const opt = this.contextOptions.find(o => {
+								if (typeof o === 'string') {
+									return o === selectedLabel;
+								} else if ((o as OptGroup).options) {
+									return !!((o as OptGroup).options.find(o => {
+										const opt = (o as Option).value ?? o;
+										return opt === selectedLabel;
+									}));
+								} else {
+									return (o as Option).value === selectedLabel;
+								}
+							});
+							if (opt) {
+								// Option is still in the list after changing field
+								const relPart = this.getInitialRelationPartValue(selectedLabel);
+								if (relPart) {
+									// There's only one relation part in the selected field; so set it.
+									selectedContext.relation = relPart;
+								}
+							} else {
+								// Option is no longer in this list after changing field;
+								// set to "all words".
+								selectedContext.label = 'all';
+							}
+						})
 					}
 				}
 			}
@@ -566,7 +596,6 @@ export default Vue.extend({
 						label: v,
 						relation: this.relationNames?.includes(v) ? this.getInitialRelationPartValue(v) : undefined
 					}
-					console.log(this.selectedCriterium.context);
 				}
 			},
 		},
@@ -636,7 +665,7 @@ export default Vue.extend({
 		addAnnotation() {
 			this.addedCriteria.push({
 				type: 'context',
-				fieldName: this.mainSearchField ?? '',
+				fieldName: this.mainSearchField,
 				annotation: this.defaultAnnotation,
 				context: {
 					type: 'positional',
