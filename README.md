@@ -62,8 +62,8 @@ Releases can be downloaded [here](https://github.com/INL/corpus-frontend/release
 ## Building from source
 
 - Clone this repository, use `mvn package` to build the WAR file (or download the .war from the latest release) and add corpus-frontend.war to Tomcat's webapps directory.
-- Optionally, create a file `corpus-frontend.properties` (name must be the same as the .war file) in the same directory as the BlackLab Server config file (e.g. `/etc/blacklab/`).
-See the [Configuration section](#Backend-configuration) for more information.
+- Optionally, create a file `corpus-frontend.properties` (name must be the same as the `context path`) in the same directory as the BlackLab Server config file (e.g. `/etc/blacklab/`).
+See the [Configuration section](#backend-configuration) for more information.
 - Navigate to `http://localhost:8080/corpus-frontend/` and you will see a list of available corpora you can search.
 
 For further development and debugging help, see the [Development section](#Development).
@@ -98,11 +98,9 @@ Configuration
 
 ## Main configuration file
 
-The main settings for the corpus-frontend application are configured in a file named `corpus-frontend.properties`.
+Corpus-Frontend is configured using a `properties` file.
 
-> **NOTE:** actually, the filename must match the name of your `.war`, so if your war is not named `corpus-frontend.war` but `corpus-ui.war`, the config file should be named `corpus-ui.properties`.
-
-The application will normally look for this file in the same configuration directory as BlackLab. That is, the following locations will be searched, starting from the first:
+The application will normally look for this file in the same places as BlackLab. That is, the following locations, starting from the top:
 
 - `BLACKLAB_CONFIG_DIR` environment variable (configure this in your servlet container, e.g. Tomcat)
 - `$HOME/.blacklab` (Linux) or `%USERDIR%/.blacklab` (Windows)
@@ -134,8 +132,8 @@ blsUrl=http://localhost:8080/blacklab-server/
 blsUrlExternal=/blacklab-server/
 
 # The url under which the client can reach the corpus-frontend.
-# May be needed if the corpus-frontend is proxied under a different path.
-# It defaults to the contextPath of the servlet, so it might not strictly be 'corpus-frontend', depending on your deployment.
+# May be needed if the corpus-frontend is behind a proxy that changes the url.
+# This setting actually defaults to the contextPath of the servlet, so this is just an example.
 cfUrlExternal=/corpus-frontend/
 
 # Optional directory where you can place files to further configure and customize
@@ -218,7 +216,7 @@ In addition, users can also define their own formats or extend the builtin forma
 
 There is also a hidden/experimental page (`/corpus-frontend/upload/`) for externally linking to the corpus-frontend to automatically index a file from the web.
 It can be used it to link to the frontend from external web services that output indexable files.
-It requires user uploading to be enabled, and there should be a cookie/query parameter present to configure the user name (depending on how BlackLab's `authSystem` is configured, the frontend doesn't care and just passes everything along).
+It requires user uploading to be enabled, and there should be a cookie/query parameter present to configure the user name (depending on how BlackLab's authentication is configured, the frontend doesn't care and just passes everything along).
 Parameters are passed as query parameters:
 ```properties
 file=http://my-service.tld/my-file.zip
@@ -280,7 +278,7 @@ etc/projectConfigs/ # the location set in the corporaInterfaceDataDir setting
 Let's perform a simple customization that will take you through the steps, adding a custom javascript file and change the displayed title of your documents.
 1. Follow the steps above to create the config directory for your corpus. I'll assume you left the config directory at its default location of `/etc/projectsconfigs/` and your corpus is called `example` in the following steps. Use your custom paths if necessary.
 2. Copy [the default search.xml](src/main/resources/interface-default/search.xml) into `etc/projectconfigs/example/search.xml`.
-3. Add a config option to include a custom script on the `search` page: `<CustomJs>${request:corpusPath}/static/js/custom.search.js</CustomJs>`
+3. Add a config option to include a custom script on the `search` page: `<CustomJs page="search">${request:corpusPath}/static/js/custom.search.js</CustomJs>`
 4. Create a matching javascript file `/etc/projectconfigs/example/static/js/custom.search.js`
 5. Add the following snippet to your `custom.search.js`
    ```js
