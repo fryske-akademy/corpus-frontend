@@ -2,12 +2,12 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>nl.inl.blacklab</groupId>
-    <artifactId>corpus-frontend</artifactId>
+    <artifactId>blacklab-frontend</artifactId>
     <version>3.1.1-SNAPSHOT</version>
     <packaging>war</packaging>
-    <name>INT Corpus Frontend</name>
+    <name>INT BlackLab Frontend</name>
     <description>A web application to search corpora through the BlackLab Server web service.</description>
-    <url>https://github.com/INL/corpus-frontend</url>
+    <url>https://github.com/instituutnederlandsetaal/blacklab-frontend</url>
     <organization>
         <url>https://www.ivdnt.org/</url>
         <name>Dutch Language Institute</name>
@@ -21,13 +21,13 @@
         </license>
     </licenses>
     <scm>
-        <url>https://github.com/inl/corpus-frontend</url>
-        <connection>scm:git:https://github.com/inl/corpus-frontend.git</connection>
-        <developerConnection>scm:git:https://github.com/inl/corpus-frontend.git</developerConnection>
+        <url>https://github.com/instituutnederlandsetaal/blacklab-frontend</url>
+        <connection>scm:git:https://github.com/instituutnederlandsetaal/blacklab-frontend.git</connection>
+        <developerConnection>scm:git:https://github.com/instituutnederlandsetaal/blacklab-frontend.git</developerConnection>
         <tag>HEAD</tag>
     </scm>
     <issueManagement>
-        <url>https://github.com/INL/corpus-frontend/issues</url>
+        <url>https://github.com/instituutnederlandsetaal/blacklab-frontend/issues</url>
         <system>GitHub Issues</system>
     </issueManagement>
     <developers>
@@ -72,7 +72,7 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
-                <version>3.13.0</version>
+                <version>3.14.0</version>
                 <configuration>
                     <release>17</release>
                     <showDeprecation>true</showDeprecation>
@@ -83,7 +83,7 @@
             <plugin>
                 <groupId>io.github.git-commit-id</groupId>
                 <artifactId>git-commit-id-maven-plugin</artifactId>
-                <version>5.0.0</version>
+                <version>9.0.1</version>
                 <executions>
                     <execution>
                         <id>get-the-git-infos</id>
@@ -120,7 +120,7 @@
             <plugin>
                 <groupId>com.github.eirslett</groupId>
                 <artifactId>frontend-maven-plugin</artifactId>
-                <version>1.15.0</version>
+                <version>1.15.1</version>
 
                 <configuration>
                     <workingDirectory>src/frontend</workingDirectory>
@@ -135,8 +135,8 @@
                         <configuration>
                             <!-- See https://nodejs.org/en/download/ for
                                  latest node and npm (lts) versions -->
-                            <nodeVersion>v20.11.1</nodeVersion>
-                            <npmVersion>10.2.4</npmVersion>
+                            <nodeVersion>v22.14.0</nodeVersion>
+                            <npmVersion>10.9.2</npmVersion>
                         </configuration>
                     </execution>
                     <execution>
@@ -153,7 +153,7 @@
                         <!--
                             skip compiling JS when compiling in eclipse.
                             It's slow and unneeded as you can manually start a webpack-dev-server during development.
-                            Run "npm start" in the src/frontend folder, and configure corpus-frontend.properties jspath to "http://localhost:8081/dist/js"
+                            Run "npm start" in the src/frontend folder, and configure blacklab-frontend.properties jspath to "http://localhost:8081/dist/js"
                         -->
                         <?m2e ignore?>
                     </execution>
@@ -183,7 +183,7 @@
                         <!--
                              skip compiling JS when compiling in eclipse.
                              It's slow and unneeded as you can manually start a webpack-dev-server during development.
-                             Run "npm start" in the src/frontend/src folder, and configure corpus-frontend.properties jspath to "http://localhost:80/dist"
+                             Run "npm start" in the src/frontend/src folder, and configure blacklab-frontend.properties jspath to "http://localhost:80/dist"
                         -->
                         <?m2e ignore?>
                     </execution>
@@ -210,7 +210,7 @@
         <dependency>
             <groupId>org.apache.commons</groupId>
             <artifactId>commons-lang3</artifactId>
-            <version>3.14.0</version>
+            <version>3.17.0</version>
         </dependency>
 
         <dependency>
@@ -222,15 +222,16 @@
         <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-jdk14</artifactId>
-            <version>2.0.16</version>
+            <version>2.0.17</version>
         </dependency>
 
         <dependency>
             <groupId>commons-io</groupId>
             <artifactId>commons-io</artifactId>
-            <version>2.16.1</version>
+            <version>2.19.0</version>
         </dependency>
 
+        <!-- https://mvnrepository.com/artifact/org.apache.velocity.tools/velocity-tools-view -->
         <dependency>
             <groupId>org.apache.velocity.tools</groupId>
             <artifactId>velocity-tools-generic</artifactId>
@@ -246,14 +247,14 @@
         <dependency>
             <groupId>net.sf.saxon</groupId>
             <artifactId>Saxon-HE</artifactId>
-            <version>9.9.1-8</version>
+            <version>12.7</version>
         </dependency>
 
         <!-- https://mvnrepository.com/artifact/com.google.code.gson/gson -->
         <dependency>
             <groupId>com.google.code.gson</groupId>
             <artifactId>gson</artifactId>
-            <version>2.10.1</version>
+            <version>2.12.1</version>
         </dependency>
     </dependencies>
 </project>

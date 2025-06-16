@@ -20,7 +20,7 @@
 	</xsl:template>
 
 	<xsl:template match="docInfo">
-		<h2 style="word-break:break-all;">
+		<h2 id="meta-title" style="word-break:break-all;">
 			<xsl:value-of select="*[name()=/*//titleField]" />
 		</h2>
 

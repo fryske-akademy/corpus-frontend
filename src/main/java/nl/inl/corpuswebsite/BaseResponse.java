@@ -105,6 +105,9 @@ public abstract class BaseResponse {
         // Allow all origins on all requests
         this.response.addHeader("Access-Control-Allow-Origin", "*");
 
+        // NOTE: the below line defines a snippet that is used in the documentation
+        // So don't remove it without checking the documentation.
+        // #region docsvelocitytemplatemodel
         // Utils
         model.put("esc", esc);
         model.put("date", date);
@@ -121,8 +124,6 @@ public abstract class BaseResponse {
         model.put("commitTime", GlobalConfig.commitTime);
         model.put("commitMessage", GlobalConfig.commitMessage);
         model.put("version", GlobalConfig.version);
-
-        cfg.getAnalyticsKey().ifPresent(key -> model.put("googleAnalyticsKey", key));
 
         Optional.ofNullable(globalCfg.get(Keys.BANNER_MESSAGE))
                 .filter(msg -> !this.isCookieSet("banner-hidden", Integer.toString(msg.hashCode())))
@@ -151,6 +152,11 @@ public abstract class BaseResponse {
         model.put("displayName", cfg.getDisplayName());
         model.put("displayNameIsFallback", cfg.displayNameIsFallback());
 
+        model.put("contextPath", globalCfg.get(Keys.CF_URL_ON_CLIENT));
+        model.put("corpusId", corpus.orElse(""));
+        model.put("corpusPath", globalCfg.get(Keys.CF_URL_ON_CLIENT) + corpus.map(c -> "/" + c).orElse(""));
+        // #endregion docsvelocitytemplatemodel
+
         // HTML-escape all data written into the velocity templates by default
         // Only allow access to the raw string if the expression contains the word "unescaped"
         EventCartridge cartridge = model.getEventCartridge();
@@ -165,13 +171,11 @@ public abstract class BaseResponse {
                 public Object referenceInsert(Context context, String expression, Object value) {
                     boolean escape = !expression.toLowerCase().contains("unescaped");
                     String val = value != null ? value.toString() : "";
-
                     return escape ? esc.html(val) : val;
                 }
             });
             model.attachEventCartridge(cartridge);
         }
-
     }
 
     /**
